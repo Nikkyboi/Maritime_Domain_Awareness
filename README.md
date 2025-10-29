@@ -6,10 +6,10 @@
 Create your environment using one of the following commands:
 - **macOS/Linux**:
     ```bash
-    python3.11 -m venv src/env
+    python3.11 -m venv env
 - **Windows**:
     ```bash
-    py -3.11 -m venv src/env
+    py -3.11 -m venv env
 
 # In case error creating environment then possible solution (Windowns only)
 1. Right-click the Start menu and choose Windows PowerShell (Admin).
@@ -22,19 +22,19 @@ Create your environment using one of the following commands:
 Activate your environment using one of the following commands:
 - **macOS/Linux**:
     ```bash
-    source src/env/bin/activate
+    source env/bin/activate
 - **Windows**:
     ```bash
-    .\src\env\Scripts\activate  
+    .\env\Scripts\activate  
 
 # Commandline to download all requirements
 Make sure to activate enviroment
 - **macOS/Linux**:
     ```bash
-    pip install -r src/requirements.txt
+    pip install -r requirements.txt
 - **Windows**:
     ```bash
-    pip install -r .\src\requirements.txt
+    pip install -r .\requirements.txt
 
 # Commandline to run program:
 Remember to activate enviroment first!
