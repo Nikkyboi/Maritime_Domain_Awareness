@@ -23,7 +23,10 @@ class MyDataset(Dataset):
     def preprocess(self, output_folder: Path) -> None:
         """Preprocess the raw data and save it to the output folder."""
 
+        
+
 def fn(file_path, out_path):
+    # ---- read ----
     dtypes = {
         "MMSI": "object",
         "SOG": float,
@@ -32,68 +35,102 @@ def fn(file_path, out_path):
         "Latitude": float,
         "# Timestamp": "object",
         "Type of mobile": "object",
+        # optional fishing-related columns (may not exist or may be mixed types)
+        "Navigational status": "object",
+        "Ship type": "object",
     }
     usecols = list(dtypes.keys())
+    # read only columns that exist in the file
     df = pandas.read_csv(file_path, usecols=usecols, dtype=dtypes)
-
-    # Remove errors
+    
+    # ---- base geographic and quality filters ----
     bbox = [60, 0, 50, 20]
     north, west, south, east = bbox
-    df = df[(df["Latitude"] <= north) & (df["Latitude"] >= south) & (df["Longitude"] >= west) & (
-            df["Longitude"] <= east)]
+    df = df[
+        (df["Latitude"] <= north) & (df["Latitude"] >= south) &
+        (df["Longitude"] >= west) & (df["Longitude"] <= east)
+    ]
 
-    df = df[df["Type of mobile"].isin(["Class A", "Class B"])].drop(columns=["Type of mobile"])
-    df = df[df["MMSI"].str.len() == 9]  # Adhere to MMSI format
-    df = df[df["MMSI"].str[:3].astype(int).between(200, 775)]  # Adhere to MID standard
+    # keep only AIS Class A/B
+    df = df[df["Type of mobile"].isin(["Class A", "Class B"])]
+    df = df.drop(columns=["Type of mobile"])
 
+    # MMSI sanity + Danish MMSIs (219*, 220*)
+    df = df[df["MMSI"].astype(str).str.len() == 9]
+    df = df[df["MMSI"].astype(str).str.isnumeric()]
+    df = df[df["MMSI"].astype(str).str.startswith(("219", "220"))]
+
+    # ---- fishing vessel filters ----
+    # Normalize helper
+    def _norm_str_col(s):
+        return s.fillna("").astype(str).str.strip().str.lower()
+
+    # Start with False, then OR in evidence
+    fishing_mask = pandas.Series(False, index=df.index)
+
+    # Navigational status: look for phrases like "engaged in fishing"
+    if "Navigational status" in df.columns:
+        nav_norm = _norm_str_col(df["Navigational status"])
+        fishing_mask = fishing_mask | nav_norm.str.contains("fish")
+
+    # Ship type: can be text ("Fishing") or numeric AIS code (30)
+    if "Ship type" in df.columns:
+        # two paths: numeric-like vs text-like
+        st = df["Ship type"]
+        # numeric detection
+        numeric_mask = pandas.to_numeric(st, errors="coerce")
+        is_fishing_code = numeric_mask.eq(30)  # AIS code 30 = Fishing
+        # text detection
+        text_norm = _norm_str_col(st)
+        is_fishing_text = text_norm.str.contains("fish")
+        fishing_mask = fishing_mask | is_fishing_code.fillna(False) | is_fishing_text
+
+    # Apply fishing mask if either column existed. If neither existed, mask is all False → drop all.
+    # If you prefer to keep all when columns missing, change the condition below.
+    has_any_fishing_field = ("Navigational status" in df.columns) or ("Ship type" in df.columns)
+    if has_any_fishing_field:
+        df = df[fishing_mask]
+    else:
+        # No fields to identify fishing → nothing to keep for this requirement.
+        df = df.iloc[0:0]
+
+    # ---- timestamps, dedup, filters, segmentation ----
     df = df.rename(columns={"# Timestamp": "Timestamp"})
     df["Timestamp"] = pandas.to_datetime(df["Timestamp"], format="%d/%m/%Y %H:%M:%S", errors="coerce")
-
-    df = df.drop_duplicates(["Timestamp", "MMSI", ], keep="first")
+    df = df.dropna(subset=["Timestamp"])
+    df = df.drop_duplicates(["Timestamp", "MMSI"], keep="first")
 
     def track_filter(g):
-        len_filt = len(g) > 256  # Min required length of track/segment
-        sog_filt = 1 <= g["SOG"].max() <= 50  # Remove stationary tracks/segments
-        time_filt = (g["Timestamp"].max() - g["Timestamp"].min()).total_seconds() >= 60 * 60  # Min required timespan
+        len_filt = len(g) > 256
+        # still in knots here
+        sog_filt = 1 <= g["SOG"].max() <= 50
+        time_filt = (g["Timestamp"].max() - g["Timestamp"].min()).total_seconds() >= 60 * 60
         return len_filt and sog_filt and time_filt
 
-    # Track filtering
     df = df.groupby("MMSI").filter(track_filter)
-    df = df.sort_values(['MMSI', 'Timestamp'])
+    df = df.sort_values(["MMSI", "Timestamp"])
 
-    # Divide track into segments based on timegap
-    df['Segment'] = df.groupby('MMSI')['Timestamp'].transform(
-        lambda x: (x.diff().dt.total_seconds().fillna(0) >= 15 * 60).cumsum())  # Max allowed timegap
+    # segment by ≥15 min gap
+    df["Segment"] = df.groupby("MMSI")["Timestamp"].transform(
+        lambda x: (x.diff().dt.total_seconds().fillna(0) >= 15 * 60).cumsum()
+    )
 
-    # Segment filtering
-    df = df.groupby(["MMSI", "Segment"]).filter(track_filter)
-    df = df.reset_index(drop=True)
+    # filter segments
+    df = df.groupby(["MMSI", "Segment"]).filter(track_filter).reset_index(drop=True)
 
-    #
-    knots_to_ms = 0.514444
-    df["SOG"] = knots_to_ms * df["SOG"]
+    # ---- units ----
+    df["SOG"] = 0.514444 * df["SOG"]  # knots → m/s
 
-    # Clustering
-    # kmeans = KMeans(n_clusters=48, random_state=0)
-    # kmeans.fit(df[["Latitude", "Longitude"]])
-    # df["Geocell"] = kmeans.labels_
-    # centers = kmeans.cluster_centers_
-    # "Latitude": center[0],
-    # "Longitude": center[1],
-
-    # df["Date"] = df["Timestamp"].dt.strftime("%Y-%m-%d")
-    # Save as parquet file with partitions
+    # ---- write parquet, partitioned by MMSI and Segment ----
     table = pyarrow.Table.from_pandas(df, preserve_index=False)
     pyarrow.parquet.write_to_dataset(
         table,
         root_path=out_path,
-        partition_cols=["MMSI",  # "Date",
-                        "Segment",  # "Geocell"
-                        ]
+        partition_cols=["MMSI", "Segment"],
     )
 
 
-def preprocess(data_path: Path = "data/Raw/port_locodes.csv", output_folder: Path = "data/Processed/") -> None:
+def preprocess(data_path: Path = "data/Raw/aisdk-2025-03-01.csv", output_folder: Path = "data/Processed/") -> None:
     print("Preprocessing data...")
     fn(data_path, output_folder)
     

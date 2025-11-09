@@ -1,3 +1,7 @@
+# The data, as it is too large for github
+data/Raw/aisdk-2025-*
+data/Processed/*
+
 docs/site/
 
 # test cache
