@@ -35,7 +35,7 @@ def fn(file_path, out_path):
         "Latitude": float,
         "# Timestamp": "object",
         "Type of mobile": "object",
-        # optional fishing-related columns (may not exist or may be mixed types)
+        # fishing-related columns
         "Navigational status": "object",
         "Ship type": "object",
     }
@@ -73,28 +73,24 @@ def fn(file_path, out_path):
         nav_norm = _norm_str_col(df["Navigational status"])
         fishing_mask = fishing_mask | nav_norm.str.contains("fish")
 
-    # Ship type: can be text ("Fishing") or numeric AIS code (30)
+    # Ship type: can be text "Fishing"
     if "Ship type" in df.columns:
         # two paths: numeric-like vs text-like
         st = df["Ship type"]
-        # numeric detection
-        numeric_mask = pandas.to_numeric(st, errors="coerce")
-        is_fishing_code = numeric_mask.eq(30)  # AIS code 30 = Fishing
         # text detection
         text_norm = _norm_str_col(st)
         is_fishing_text = text_norm.str.contains("fish")
-        fishing_mask = fishing_mask | is_fishing_code.fillna(False) | is_fishing_text
+        fishing_mask = fishing_mask | is_fishing_text
 
     # Apply fishing mask if either column existed. If neither existed, mask is all False → drop all.
-    # If you prefer to keep all when columns missing, change the condition below.
     has_any_fishing_field = ("Navigational status" in df.columns) or ("Ship type" in df.columns)
     if has_any_fishing_field:
         df = df[fishing_mask]
     else:
-        # No fields to identify fishing → nothing to keep for this requirement.
+        # No fields to identify fishing → nothing to keep.
         df = df.iloc[0:0]
 
-    # ---- timestamps, dedup, filters, segmentation ----
+    # ---- timestamps, filters, segmentation ----
     df = df.rename(columns={"# Timestamp": "Timestamp"})
     df["Timestamp"] = pandas.to_datetime(df["Timestamp"], format="%d/%m/%Y %H:%M:%S", errors="coerce")
     df = df.dropna(subset=["Timestamp"])
