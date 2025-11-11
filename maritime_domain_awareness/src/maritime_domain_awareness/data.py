@@ -6,6 +6,9 @@ import pandas
 import pyarrow
 import pyarrow.parquet
 from sklearn.cluster import KMeans
+import pandas as pd
+import numpy as np
+import torch
 
 
 class MyDataset(Dataset):
@@ -61,6 +64,12 @@ def fn(file_path, out_path):
     df = df[df["MMSI"].astype(str).str.startswith(("219", "220"))]
 
     # ---- fishing vessel filters ----
+    # TODO: Currently we are dismissing any AIS messages that do not include the word 'fish' in ship type or
+    # navigational status. We probably should save the MMSI of any vessel where the word 'fish' occurs even once,
+    # and then save all messages from that vessel.
+    # Include filtering for word "Trawl Fishing" or a subset of that string in the destination column
+    # Include heading in the filtered fields?
+
     # Normalize helper
     def _norm_str_col(s):
         return s.fillna("").astype(str).str.strip().str.lower()
@@ -124,6 +133,8 @@ def fn(file_path, out_path):
         root_path=out_path,
         partition_cols=["MMSI", "Segment"],
     )
+
+
 
 
 def preprocess(data_path: Path = "data/Raw/aisdk-2025-03-01.csv", output_folder: Path = "data/Processed/") -> None:
