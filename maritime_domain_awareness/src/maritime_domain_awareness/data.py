@@ -137,8 +137,18 @@ def fn(file_path, out_path):
 
 
 
-def preprocess(data_path: Path = "data/Raw/aisdk-2025-03-01.csv", output_folder: Path = "data/Processed/") -> None:
+def preprocess(data_path: Path = None, output_folder: Path = None) -> None:
     print("Preprocessing data...")
+    
+    # Get the project root (maritime_domain_awareness folder)
+    project_root = Path(__file__).resolve().parents[3]
+    
+    if data_path is None:
+        data_path = project_root / "maritime_domain_awareness" / "data" / "Raw" / "aisdk-2025-03-01.csv"
+    
+    if output_folder is None:
+        output_folder = project_root / "maritime_domain_awareness" / "data" / "Processed"
+    
     fn(data_path, output_folder)
     
     #dataset = MyDataset(data_path)
