@@ -110,6 +110,16 @@ def fn(file_path, out_path):
     # filter segments
     df = df.groupby(["MMSI", "Segment"]).filter(track_filter).reset_index(drop=True)
 
+    # ---- Add Δt feature (seconds between messages within each segment) ----
+    df["DeltaT"] = (
+        df.groupby(["MMSI", "Segment"])["Timestamp"]
+          .diff()
+          .dt.total_seconds()
+    )
+
+    # for the first message in each segment, diff() is NaN → set to 0
+    df["DeltaT"] = df["DeltaT"].fillna(0.0)
+
     # ---- units ----
     df["SOG"] = 0.514444 * df["SOG"]  # knots → m/s
 
