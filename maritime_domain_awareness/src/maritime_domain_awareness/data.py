@@ -36,9 +36,10 @@ def fn(file_path, out_path):
         "COG": float,
         "Longitude": float,
         "Latitude": float,
+        "Heading": float,
         "# Timestamp": "object",
         "Type of mobile": "object",
-        # fishing-related columns
+        # fishing-related columns for filtering
         "Navigational status": "object",
         "Ship type": "object",
     }
@@ -63,42 +64,27 @@ def fn(file_path, out_path):
     df = df[df["MMSI"].astype(str).str.isnumeric()]
     df = df[df["MMSI"].astype(str).str.startswith(("219", "220"))]
 
-    # ---- fishing vessel filters ----
-    # TODO: Currently we are dismissing any AIS messages that do not include the word 'fish' in ship type or
-    # navigational status. We probably should save the MMSI of any vessel where the word 'fish' occurs even once,
-    # and then save all messages from that vessel.
+    # TODO: 
     # Include filtering for word "Trawl Fishing" or a subset of that string in the destination column
-    # Include heading in the filtered fields?
-    # Don't include the fushing-related features in the processed data, they should just be used for filtering
+    # Fix null values of certain features like COG, Heading, etc.
+    # Add Δt as a feature and remove timestamp
 
+    # ---- fishing vessel filters ----
     # Normalize helper
     def _norm_str_col(s):
         return s.fillna("").astype(str).str.strip().str.lower()
 
-    # Start with False, then OR in evidence
-    fishing_mask = pandas.Series(False, index=df.index)
+    fishing_mask_row = pandas.Series(False, index=df.index)
 
-    # Navigational status: look for phrases like "engaged in fishing"
-    if "Navigational status" in df.columns:
-        nav_norm = _norm_str_col(df["Navigational status"])
-        fishing_mask = fishing_mask | nav_norm.str.contains("fish")
+    nav_norm = _norm_str_col(df["Navigational status"])
+    fishing_mask_row |= nav_norm.str.contains("fish")
 
-    # Ship type: can be text "Fishing"
-    if "Ship type" in df.columns:
-        # two paths: numeric-like vs text-like
-        st = df["Ship type"]
-        # text detection
-        text_norm = _norm_str_col(st)
-        is_fishing_text = text_norm.str.contains("fish")
-        fishing_mask = fishing_mask | is_fishing_text
+    type_norm = _norm_str_col(df["Ship type"])
+    fishing_mask_row |= type_norm.str.contains("fish")
 
-    # Apply fishing mask if either column existed. If neither existed, mask is all False → drop all.
-    has_any_fishing_field = ("Navigational status" in df.columns) or ("Ship type" in df.columns)
-    if has_any_fishing_field:
-        df = df[fishing_mask]
-    else:
-        # No fields to identify fishing → nothing to keep.
-        df = df.iloc[0:0]
+    fishing_mmsi = df.loc[fishing_mask_row, "MMSI"].unique()
+
+    df = df[df["MMSI"].isin(fishing_mmsi)]
 
     # ---- timestamps, filters, segmentation ----
     df = df.rename(columns={"# Timestamp": "Timestamp"})
@@ -126,6 +112,10 @@ def fn(file_path, out_path):
 
     # ---- units ----
     df["SOG"] = 0.514444 * df["SOG"]  # knots → m/s
+
+    # ----- Drop columns we don't want model training on -------
+    df = df.drop(columns=["Navigational status", "Ship type", "Timestamp"])
+    
 
     # ---- write parquet, partitioned by MMSI and Segment ----
     table = pyarrow.Table.from_pandas(df, preserve_index=False)
