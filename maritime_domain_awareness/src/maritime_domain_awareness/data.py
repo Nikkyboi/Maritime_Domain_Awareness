@@ -29,7 +29,7 @@ class MyDataset(Dataset):
         
 
 def fn(file_path, out_path):
-    # ---- read ----
+    # ----- read -----
     dtypes = {
         "MMSI": "object",
         "SOG": float,
@@ -66,9 +66,10 @@ def fn(file_path, out_path):
 
     # TODO: 
     # Include filtering for word "Trawl Fishing" or a subset of that string in the destination column
-    # Fix null values of certain features like COG, Heading, etc.
+    # Consider whether simply dropping observations where any feature has a null value is the right move.
+    # Alternatively, could simply drop the features that frequently has null values
 
-    # ---- fishing vessel filters ----
+    # ----- fishing vessel filters -----
     # Normalize helper
     def _norm_str_col(s):
         return s.fillna("").astype(str).str.strip().str.lower()
@@ -85,7 +86,7 @@ def fn(file_path, out_path):
 
     df = df[df["MMSI"].isin(fishing_mmsi)]
 
-    # ---- timestamps, filters, segmentation ----
+    # ----- timestamps, filters, segmentation -----
     df = df.rename(columns={"# Timestamp": "Timestamp"})
     df["Timestamp"] = pandas.to_datetime(df["Timestamp"], format="%d/%m/%Y %H:%M:%S", errors="coerce")
     df = df.dropna(subset=["Timestamp"])
@@ -109,7 +110,11 @@ def fn(file_path, out_path):
     # filter segments
     df = df.groupby(["MMSI", "Segment"]).filter(track_filter).reset_index(drop=True)
 
-    # ---- Add Δt feature (seconds between messages within each segment) ----
+    # ----- Drop observations where any feature has null value -----
+    feature_cols = ["Latitude", "Longitude", "SOG", "COG", "Heading"]
+    df = df.dropna(subset=feature_cols)
+
+    # ----- Add Δt feature (seconds between messages within each segment) -----
     df["DeltaT"] = (
         df.groupby(["MMSI", "Segment"])["Timestamp"]
           .diff()
@@ -119,14 +124,13 @@ def fn(file_path, out_path):
     # for the first message in each segment, diff() is NaN → set to 0
     df["DeltaT"] = df["DeltaT"].fillna(0.0)
 
-    # ---- units ----
+    # ----- units -----
     df["SOG"] = 0.514444 * df["SOG"]  # knots → m/s
 
-    # ----- Drop columns we don't want model training on -------
+    # ----- Drop columns we don't want model training on ------
     df = df.drop(columns=["Navigational status", "Ship type", "Timestamp"])
-    
 
-    # ---- write parquet, partitioned by MMSI and Segment ----
+    # ----- write parquet, partitioned by MMSI and Segment -----
     table = pyarrow.Table.from_pandas(df, preserve_index=False)
     pyarrow.parquet.write_to_dataset(
         table,
