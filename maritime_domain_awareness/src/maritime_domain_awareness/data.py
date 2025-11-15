@@ -127,6 +127,21 @@ def fn(file_path, out_path):
     # ---- units ----
     df["SOG"] = 0.514444 * df["SOG"]  # knots → m/s
 
+    # ---- ECEF unit vectors from lat/lon ----
+    # degrees → radians
+    lat_rad = np.deg2rad(df["Latitude"].values)
+    lon_rad = np.deg2rad(df["Longitude"].values)
+
+    # unit sphere, origin at Earth's center
+    # assuming spherical Earth; height ignored
+    cos_lat = np.cos(lat_rad)
+    df["X"] = cos_lat * np.cos(lon_rad)
+    df["Y"] = cos_lat * np.sin(lon_rad)
+    df["Z"] = np.sin(lat_rad)
+
+    # drop original lat/lon
+    df = df.drop(columns=["Latitude", "Longitude"])
+
     # ---- write parquet, partitioned by MMSI and Segment ----
     table = pyarrow.Table.from_pandas(df, preserve_index=False)
     pyarrow.parquet.write_to_dataset(
