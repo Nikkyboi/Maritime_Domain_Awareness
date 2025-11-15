@@ -69,6 +69,7 @@ def fn(file_path, out_path):
     # and then save all messages from that vessel.
     # Include filtering for word "Trawl Fishing" or a subset of that string in the destination column
     # Include heading in the filtered fields?
+    # Don't include the fushing-related features in the processed data, they should just be used for filtering
 
     # Normalize helper
     def _norm_str_col(s):
