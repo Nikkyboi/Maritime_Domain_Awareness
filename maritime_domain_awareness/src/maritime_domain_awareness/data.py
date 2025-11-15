@@ -67,7 +67,6 @@ def fn(file_path, out_path):
     # TODO: 
     # Include filtering for word "Trawl Fishing" or a subset of that string in the destination column
     # Fix null values of certain features like COG, Heading, etc.
-    # Add Δt as a feature and remove timestamp
 
     # ---- fishing vessel filters ----
     # Normalize helper
