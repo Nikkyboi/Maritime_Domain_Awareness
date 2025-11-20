@@ -27,6 +27,8 @@ Activate your environment using one of the following commands:
     ```bash
     .\env\Scripts\activate  
 
+# src.maritime_domain_awareness.model
+
 # Commandline to download all requirements
 Make sure to activate enviroment
 - **macOS/Linux**:
@@ -41,6 +43,7 @@ Remember to activate enviroment first!
 - **macOS/Linux**:
     ```bash
     python -m src.(folder).(file)
+    python -m src.maritime_domain_awareness.data
 - **Windows**:
     ```bash
     python .\src\Group_work_(nr)\(file)

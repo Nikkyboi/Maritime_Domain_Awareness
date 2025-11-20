@@ -6,8 +6,14 @@ manual_test/
 # other local dev info
 .vscode/
 
+reports/*
+
 # Mac OS-specific storage files
 .DS_Store
+
+# data files
+data/Raw/
+data/Processed/
 
 # vim
 *.swp
