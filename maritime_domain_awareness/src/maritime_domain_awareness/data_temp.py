@@ -229,6 +229,6 @@ def preprocess(data_path: Path = "data/Processed/2025-03-01/danish_219_220.parqu
     #extract_single_fishing_ship(input_file, output_file)
     #remove_duplicates(output_file, output_file, cols_to_check=["# Timestamp", "MMSI", "Latitude", "Longitude", "SOG", "COG", "Heading"])
     #resample_to_10s_grid(input_path=input_file,output_path=output_file,freq="10S")
-
+    pass
 if __name__ == "__main__":
     typer.run(preprocess)
