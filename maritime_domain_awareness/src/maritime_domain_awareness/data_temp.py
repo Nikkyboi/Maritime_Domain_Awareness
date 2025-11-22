@@ -8,8 +8,16 @@ import pyarrow.parquet as pq
 from pathlib import Path
 from zipfile import ZipFile
 
-class MyDataset(Dataset):
-    """My custom dataset."""
+class PreprocessDataset(Dataset):
+    """ 
+    Custom Dataset for maritime domain awareness data.
+
+    Takes in a path to CSV, then preprocesses the data to parquet format.
+    Options:
+    - See length of dataset
+    - Get a sample by index
+    - Preprocess the data and save to output folder in Parquet format
+    """
     def __init__(self, data_path: Path) -> None:
         if not data_path.exists():
             raise FileNotFoundError(f"Data path {data_path} does not exist.")
