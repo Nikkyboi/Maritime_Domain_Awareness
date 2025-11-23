@@ -1,8 +1,8 @@
 from pathlib import Path
 import pandas as pd
+import pandas
 import typer
 from torch.utils.data import Dataset
-import pandas
 import pyarrow as pa
 import pyarrow.parquet as pq
 from pathlib import Path
@@ -73,13 +73,13 @@ class PreprocessDataset(Dataset):
         df = pd.read_csv(input_path)
         df_danish = filterForDanishShips(df)
         # df_fishing = filterForFishingVessels(df_danish)
-        # df_no_duplicates = remove_duplicates(input_file, output_file, cols_to_check=["# Timestamp", "MMSI"])
-        # df_regularized = resample_to_freq_grid(input_file, output_file, freq="10S")
+        df_removed_duplicates = remove_duplicates(df_danish, cols_to_check=["# Timestamp", "lat", "lon"])
+        df_regularized = resample_to_freq_grid(df_removed_duplicates, freq="10S")
 
         # Save the preprocessed data as a Parquet file
-        df_danish.to_parquet(output_path, index=False)
+        df_regularized.to_parquet(output_path, index=False)
 
-def filterForDanishShips(df: pandas.DataFrame) -> pandas.DataFrame:
+def filterForDanishShips(df: pd.DataFrame) -> pd.DataFrame:
     """
     # Keep only ships with Danish MMSI (starting with 219 and 220)
 
@@ -99,6 +99,52 @@ def filterForFishingVessels(df: pandas.DataFrame) -> pandas.DataFrame:
     """
     pass
     return df
+
+def remove_duplicates(df: pd.DataFrame, cols_to_check: list[str] | None = None) -> pd.DataFrame:
+    """
+    Remove duplicate rows from the DataFrame.
+    """
+    # Remove exact duplicates
+    df_no_duplicates = df.drop_duplicates()
+
+    # Remove duplicates based on MMSI and Timestamp
+    df_no_duplicates = df_no_duplicates.drop_duplicates(subset=cols_to_check)
+
+    return df_no_duplicates
+
+def resample_to_freq_grid(df: pd.DataFrame, freq: str = "10S") -> pd.DataFrame:
+    """
+    Resample the DataFrame to a regular time grid with the specified frequency.
+    """
+    timestamp_col: str = "# Timestamp"
+    # Parse timestamp
+    df["Timestamp"] = pd.to_datetime(
+        df[timestamp_col],
+        format="%d/%m/%Y %H:%M:%S",
+    )
+
+    # Sort by time (important before resampling)
+    df = df.sort_values("Timestamp")
+
+    # Set index to timestamp for resampling
+    df = df.set_index("Timestamp")
+
+    # Resample to a regular 10-second grid
+    # - ffill: forward-fill last known values into gaps
+    #   (you can change to .interpolate() for lat/lon if you want)
+    df_resampled = df.resample(freq).ffill()
+
+    # Bring the timestamp back as a column
+    df_resampled = df_resampled.reset_index()
+
+    # Optional: add a HH:MM:SS-only column (no date)
+    df_resampled["time_10s"] = df_resampled["Timestamp"].dt.strftime("%H:%M:%S")
+
+    # Remove the original timestamp column if needed
+    df_resampled = df_resampled.drop(columns=[timestamp_col], errors='ignore')
+
+    # Remove date so only time remains in the timestamp column
+    df_resampled["Timestamp"] = df_resampled["Timestamp"].dt.strftime("%H:%M:%S")
 
 
 def extract_single_fishing_ship(
@@ -223,12 +269,17 @@ def preprocess(data_path: Path = "data/Processed/2025-03-01/danish_219_220.parqu
     #dataset = MyDataset(data_path)
     #dataset.preprocess(output_folder)
     #input_file = "data/Raw/2025-03-01/aisdk-2025-03-01_single_fishing_ship.csv"
-    input_file = "data/Raw/2025-03-01/training_example.csv"
-    output_file = "data/Raw/2025-03-01/training_example_temp.csv"
+    input_file = "data/Raw/2025-03-01/training_example_temp.csv"
+    #output_file = "data/Raw/2025-03-01/training_example_temp.csv"
     #keep_only_danish_ships(input_file, output_file)
     #extract_single_fishing_ship(input_file, output_file)
     #remove_duplicates(output_file, output_file, cols_to_check=["# Timestamp", "MMSI", "Latitude", "Longitude", "SOG", "COG", "Heading"])
     #resample_to_10s_grid(input_path=input_file,output_path=output_file,freq="10S")
-    pass
+    
+    # to parquet
+    output_file_parquet = "data/Raw/2025-03-01/training_example_temp.parquet"
+    df = pd.read_csv(input_file)
+    df.to_parquet(output_file_parquet, index=False)
+    
 if __name__ == "__main__":
     typer.run(preprocess)

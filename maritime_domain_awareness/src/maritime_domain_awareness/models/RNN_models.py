@@ -10,6 +10,13 @@ class myRecurrent(nn.Module):
     """
     def __init__(self, n_in : int, n_hid: int, n_out: int, num_layers : int =1, batch_first : bool =False, dropout: float =0.0, activation: str ="tanh"):
         super(myRecurrent, self).__init__()
+        # Saving parameters for summary
+        self.n_in = n_in
+        self.n_hid = n_hid
+        self.n_out = n_out
+        self.num_layers = num_layers
+        self.dropout = dropout
+
         # batch_first:
         # If true changes the input shape to (batch, time-step, feature)
         # If false, the input shape is (time-step, batch, feature)
@@ -54,6 +61,18 @@ class myRecurrent(nn.Module):
 
         return x
 
+    def print_summary(self) -> None:
+        """
+        Print a summary of the model architecture.
+        """
+        print("Input features (n_in):", self.n_in)
+        print("Hidden features (n_hid):", self.n_hid)
+        print("Output features (n_out):", self.n_out)
+        print("Number of layers (num_layers):", self.num_layers)
+        print("Batch first:", self.batch_first)
+        print("Dropout rate:", self.dropout)
+        print("Activation function:", self.activation)
+        
 class myLSTM(nn.Module):
     """
     LSTM model for sequence modeling.
@@ -61,17 +80,24 @@ class myLSTM(nn.Module):
     n_in: Number of input features per timestamp (lat, lon, sog, cog, heading ...)
     n_out: Number of output features per timestamp
     """
-    def __init__(self, n_in : int, n_hid: int, n_out: int, num_layers : int =1, batch_first : bool =False, dropout: float =0.0):
+    def __init__(self, n_in : int, n_hid: int, n_out: int, num_layers : int =1, batch_first : bool =False, dropout: float =0.0, bias: bool =True):
         super(myLSTM, self).__init__()
-        
+
+        # Saving parameters for summary
+        self.n_in = n_in
+        self.n_hid = n_hid
+        self.n_out = n_out
+        self.num_layers = num_layers
+        self.bias = bias
         self.batch_first = batch_first
-        
+        self.dropout = dropout
+
         # LSTM layer
         self.lstm = nn.LSTM(
             input_size=n_in,
             hidden_size=n_hid,
             num_layers=num_layers,
-            bias=True,
+            bias=bias,
             batch_first=batch_first,
             dropout=dropout if num_layers > 1 else 0.0,
         )
@@ -99,6 +125,18 @@ class myLSTM(nn.Module):
 
         return x
     
+    def print_summary(self) -> None:
+        """
+        Print a summary of the model architecture.
+        """
+        print("Input features (n_in):", self.n_in)
+        print("Hidden features (n_hid):", self.n_hid)
+        print("Output features (n_out):", self.n_out)
+        print("Number of layers (num_layers):", self.num_layers)
+        print("Bias:", self.bias)
+        print("Batch first:", self.batch_first)
+        print("Dropout rate:", self.dropout)
+    
 class myGRU(nn.Module):
     """
     GRU model for sequence modeling.
@@ -111,24 +149,30 @@ class myGRU(nn.Module):
     n_in: Number of input features per timestamp (lat, lon, sog, cog, heading ...)
     n_out: Number of output features per timestamp
     """
-    def __init__(self, n_in : int, n_hid: int, n_out: int, num_layers : int =1, batch_first : bool =False, dropout: float =0.0):
+    def __init__(self, n_in : int, n_hid: int, n_out: int, num_layers : int =1, batch_first : bool =False, dropout: float =0.0, bias: bool =True):
         super(myGRU, self).__init__()
-        
+        # Saving parameters for summary
+        self.n_in = n_in
+        self.n_hid = n_hid
+        self.n_out = n_out
+        self.num_layers = num_layers
+        self.bias = bias
         self.batch_first = batch_first
-        
+        self.dropout = dropout
+
         # GRU layer
         self.gru = nn.GRU(
-            input_size=n_in,
-            hidden_size=n_hid,
-            num_layers=num_layers,
-            bias=True,
-            batch_first=batch_first,
-            dropout=dropout if num_layers > 1 else 0.0,
+            input_size = self.n_in,
+            hidden_size = self.n_hid,
+            num_layers = self.num_layers,
+            bias = self.bias,
+            batch_first = self.batch_first,
+            dropout = self.dropout if self.num_layers > 1 else 0.0,
         )
 
-        # Output layer 
-        self.fc_out = nn.Linear(n_hid, n_out)
-        
+        # Output layer
+        self.fc_out = nn.Linear(self.n_hid, self.n_out)
+
     def forward(self, x : torch.Tensor) -> torch.Tensor:
         """
         Forward pass of the model.
@@ -143,6 +187,17 @@ class myGRU(nn.Module):
 
         return x
 
+    def print_summary(self) -> None:
+        """
+        Print a summary of the model architecture.
+        """
+        print("Input features (n_in):", self.n_in)
+        print("Hidden features (n_hid):", self.n_hid)
+        print("Output features (n_out):", self.n_out)
+        print("Number of layers (num_layers):", self.num_layers)
+        print("Batch first:", self.batch_first)
+        print("Dropout rate:", self.dropout)
+
 if __name__ == "__main__":
     # Testing the myLSTM model
     n_in = 5    # lat, lon, sog, cog, heading
@@ -152,6 +207,7 @@ if __name__ == "__main__":
     # test model
     myRNN_model = myRecurrent(n_in=n_in, n_hid=n_hid, n_out=n_out, num_layers=2)
     myLSTM_model = myLSTM(n_in=n_in, n_hid=n_hid, n_out=n_out, num_layers=2)
+    myGRU_model = myGRU(n_in=n_in, n_hid=n_hid, n_out=n_out, num_layers=2)
     
     # print model summary
     print(myRNN_model)
@@ -165,7 +221,7 @@ if __name__ == "__main__":
     # forward pass
     y_rnn = myRNN_model(x_input_2)
     y_lstm = myLSTM_model(x_input_2)
-    y_gru = myGRU(n_in=n_in, n_hid=n_hid, n_out=n_out, num_layers=2)(x_input_2)
+    y_gru = myGRU_model(x_input_2)
 
     # print output shape and values
     print("Output shape:", y_rnn.shape)
@@ -174,3 +230,6 @@ if __name__ == "__main__":
     print("Output:", y_lstm)
     print("Output shape:", y_gru.shape)
     print("Output:", y_gru)
+    
+    print("Testing completed.")
+    print(myGRU_model.print_summary())

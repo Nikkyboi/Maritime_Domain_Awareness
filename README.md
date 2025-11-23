@@ -43,7 +43,7 @@ Remember to activate enviroment first!
 - **macOS/Linux**:
     ```bash
     python -m src.(folder).(file)
-    python -m src.maritime_domain_awareness.data
+    python -m src.maritime_domain_awareness.models.RNN_models
 - **Windows**:
     ```bash
     python .\src\Group_work_(nr)\(file)

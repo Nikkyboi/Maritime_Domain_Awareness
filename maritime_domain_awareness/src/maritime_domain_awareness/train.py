@@ -6,8 +6,7 @@ import pandas as pd
 import torch
 from torch.utils.data import TensorDataset, DataLoader, Dataset
 from torch import nn
-from . import RNN_models
-from . import Transformer_model
+from .models import Load_model
 
 class AISTrajectorySeq2Seq(Dataset):
     """
@@ -52,7 +51,14 @@ def load_and_split_data(
     Load and split the dataset into train, validation, and test sets.
     """
     input_file = Path(input_file)
-    df = pd.read_csv(input_file)
+    
+    if input_file.suffix == ".csv":
+        df = pd.read_csv(input_file)
+    elif input_file.suffix == ".parquet":
+        df = pd.read_parquet(input_file)
+    else:
+        raise ValueError(f"Unsupported file format: {input_file.suffix}")
+    
 
     # Select input + output columns
     #in_cols  = ["Latitude", "Longitude", "SOG", "COG", "Heading"]
@@ -176,6 +182,7 @@ if __name__ == "__main__":
     - RNN_models.myLSTM
     - RNN_models.myGRU
     - Transformer_model.myTransformer
+    - Mamba_model.Mamba
     
     Because AISTrajectorySeq2Seq dataset returns sequences of shape:
     [B, T, n_in]
@@ -183,6 +190,7 @@ if __name__ == "__main__":
     It gets transposed to [T, B, n_in] if model.batch_first is False.
     
     """
+    
     # Only training on one ship
     input_file = "data/Raw/2025-03-01/training_example_temp.csv"
     
@@ -194,71 +202,49 @@ if __name__ == "__main__":
     print("X_train.shape:", train_X.shape)
     print("y_train.shape:", train_y.shape)
 
+    # Choose sequence length (number of timesteps per sample)
     seq_len = 50
     
+    # Create datasets and dataloaders
     train_dataset = AISTrajectorySeq2Seq(train_X, train_y, seq_len)
     val_dataset   = AISTrajectorySeq2Seq(val_X,   val_y,   seq_len)
     test_dataset  = AISTrajectorySeq2Seq(test_X,  test_y,  seq_len)
 
+    # Create data loaders
     train_loader = DataLoader(train_dataset, batch_size=32, shuffle=True)
     val_loader   = DataLoader(val_dataset,   batch_size=32, shuffle=False)
     test_loader  = DataLoader(test_dataset,  batch_size=32, shuffle=False)
     
-    #models = "models/ais_RNN_model.pth"
-    #models = "models/ais_lstm_model.pth"
-    #models = "models/ais_gru_model.pth"
-    models = "models/ais_transformer_model.pth"
+    # Choose the name of the model to train
+    # Options: "rnn", "lstm", "gru", "transformer" & "mamba"
+    model_name = "Transformer"
+
+    # Look for the existing model
+    models = "models/ais_" + model_name + "_model.pth"
+    
+    # Inputs, Hidden, Outputs
+    n_in = 2    # lat, lon
+    n_hid = 64  # hidden size
+    n_out = 2   # lat, lon
+    
+    # Epochs and learning rate
+    epochs = 5
+    lr = 1e-3
     
     if Path(models).exists():
-        print("Loading existing model...")
-        """
-        RNN_models = RNN_models.myLSTM(
-            n_in=2,
-            n_hid=64,
-            n_out=2,
-            num_layers=2,
-            batch_first=False,
-            dropout=0.1,
-        )
-        RNN_models.load_state_dict(torch.load("models/ais_lstm_model.pth"))
-        """
-        n_in = 2    # lat, lon
-        n_hid = 64  # hidden size
-        n_out = 2   # lat, lon
-        models = Transformer_model.myTransformer(
-        n_in=n_in,
-        n_hid=n_hid,
-        n_out=n_out,
-        num_layers=2,
-        n_heads=4,
-        dim_feedforward=128,
-        dropout=0.1,
-        batch_first=False,
-        )
-        models.load_state_dict(torch.load("models/ais_transformer_model.pth"))
+        print("Loading existing model:")
+        model = Load_model.load_model(model_name, n_in, n_out, n_hid)
+        model.load_state_dict(torch.load(models))
     else:
         print("Training new model...")
-        # Define model
-        n_in = 2    # lat, lon
-        n_hid = 64  # hidden size
-        n_out = 2   # lat, lon
-        model = Transformer_model.myTransformer(
-            n_in=n_in,
-            n_hid=n_hid,
-            n_out=n_out,
-            num_layers=2,
-            n_heads=4,
-            dim_feedforward=128,
-            dropout=0.1,
-            batch_first=False,
-            )
+        model = Load_model.load_model(model_name, n_in, n_out, n_hid)
 
         train_loss, val_loss = train(
             model,
             train_loader,
             val_loader,
-            num_epochs=11,
-            learning_rate=1e-3,
+            num_epochs=epochs,
+            learning_rate=lr,
         )
         
         # Save model
@@ -273,5 +259,3 @@ if __name__ == "__main__":
         plt.title("reports/Training and Validation Loss")
         plt.savefig("reports/training_validation_loss_temp.png")
         plt.show()
-
-    

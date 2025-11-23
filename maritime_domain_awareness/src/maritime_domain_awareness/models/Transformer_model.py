@@ -73,26 +73,35 @@ class myTransformer(nn.Module):
         """
         super(myTransformer, self).__init__()
         
+        # Saving parameters for summary
+        self.n_in = n_in
+        self.n_hid = n_hid
+        self.n_out = n_out
+        self.num_layers = num_layers
+        self.n_heads = n_heads
+        self.dim_feedforward = dim_feedforward
+        self.dropout = dropout
         self.batch_first = batch_first
+        self.max_len = max_len
         
         # project input to n_hid dimension
-        self.input_projection = nn.Linear(n_in, n_hid)
+        self.input_projection = nn.Linear(self.n_in, self.n_hid)
         
         # Positional Encoder
         self.positional_encoder = PositionalEncoding(
-            d_model=n_hid,
-            dropout=dropout,
-            max_len=max_len,
-            batch_first=batch_first,
+            d_model=self.n_hid,
+            dropout=self.dropout,
+            max_len=self.max_len,
+            batch_first=self.batch_first,
         )
         
         # Transformer encoder layers
         encoder_layer = nn.TransformerEncoderLayer(
-            d_model=n_hid,
-            nhead=n_heads,
-            dim_feedforward=dim_feedforward,
-            dropout=dropout,
-            batch_first=batch_first,
+            d_model=self.n_hid,
+            nhead=self.n_heads,
+            dim_feedforward=self.dim_feedforward,
+            dropout=self.dropout,
+            batch_first=self.batch_first,
         )
         self.transformer_encoder = nn.TransformerEncoder(
             encoder_layer,
@@ -100,7 +109,7 @@ class myTransformer(nn.Module):
         )
         
         # Output layer
-        self.output_layer = nn.Linear(n_hid, n_out)
+        self.output_layer = nn.Linear(self.n_hid, self.n_out)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
@@ -127,6 +136,20 @@ class myTransformer(nn.Module):
         x = self.output_layer(x)
 
         return x
+    
+    def print_summary(self) -> None:
+        """
+        Print a summary of the model architecture.
+        """
+        print("Input features (n_in):", self.n_in)
+        print("Hidden features (n_hid):", self.n_hid)
+        print("Output features (n_out):", self.n_out)
+        print("Number of layers (num_layers):", self.num_layers)
+        print("Number of heads (n_heads):", self.n_heads)
+        print("Dimension of feedforward (dim_feedforward):", self.dim_feedforward)
+        print("Dropout rate:", self.dropout)
+        print("Batch first:", self.batch_first)
+        print("Max sequence length (max_len):", self.max_len)
 
 if __name__ == "__main__":
     # Testing the myLSTM model
@@ -147,5 +170,5 @@ if __name__ == "__main__":
     )
     
     # print model summary
-    print(model)
+    model.print_summary()
 
