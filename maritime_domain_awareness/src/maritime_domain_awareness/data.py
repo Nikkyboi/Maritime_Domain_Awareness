@@ -10,6 +10,10 @@ import pandas as pd
 import numpy as np
 import torch
 
+from shapely.geometry import Point
+from shapely.geometry.polygon import Polygon
+
+
 
 class MyDataset(Dataset):
     """My custom dataset."""
@@ -127,6 +131,33 @@ def fn(file_path, out_path):
     # ----- units -----
     df["SOG"] = 0.514444 * df["SOG"]  # knots → m/s
 
+    def make_port_boundaries(data_path: Path = "data/Raw/port_locodes.csv"):
+        df = pandas.read_csv(data_path,sep=";")
+        dictionary = dict()
+        for row in df.itertuples(index = False, name = None):
+                name, code, coords = row
+                if not code.startswith("DK"):
+                    continue
+                this_coord = []
+                for coord in coords.split(","):
+                    longitude,latitude = coord.split()
+                    this_coord.append((float(longitude),float(latitude)))
+                dictionary[code] = this_coord
+        return dictionary
+
+    def point_in_polygon(row):
+        point = Point(row["Longitude"],row["Latitude"])
+        return not polygon.contains(point)
+
+    ports = make_port_boundaries()
+
+
+    for port in ports:
+        polygon = Polygon(ports[port])
+        df = df[df.apply(point_in_polygon,axis=1)]
+
+
+
     # ---- ECEF unit vectors from lat/lon ----
     # degrees → radians
     lat_rad = np.deg2rad(df["Latitude"].values)
@@ -154,7 +185,7 @@ def fn(file_path, out_path):
 
 
 
-def preprocess(data_path: Path = "data/Raw/aisdk-2025-03-01.csv", output_folder: Path = "data/Processed/") -> None:
+def preprocess(data_path: Path = "data/Raw/aisdk-2025-01-01.csv", output_folder: Path = "data/Processed/") -> None:
     print("Preprocessing data...")
     fn(data_path, output_folder)
     
