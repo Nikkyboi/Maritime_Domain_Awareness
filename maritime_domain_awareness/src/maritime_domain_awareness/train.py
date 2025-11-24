@@ -6,7 +6,7 @@ import pandas as pd
 import torch
 from torch.utils.data import TensorDataset, DataLoader, Dataset
 from torch import nn
-from .models import Load_model
+from models import Load_model
 
 class AISTrajectorySeq2Seq(Dataset):
     """
@@ -170,7 +170,7 @@ def train(model : nn.Module,
         validation_loss.append(avg_val_loss)
         print(f"Epoch {epoch+1}/{num_epochs}, Train Loss: {avg_train_loss:.4f}, Val Loss: {avg_val_loss:.4f}")
 
-    return training_loss, validation_loss
+    return training_loss, validation_loss, 
 
 if __name__ == "__main__":
     """
@@ -213,11 +213,20 @@ if __name__ == "__main__":
     lr = 1e-3
     
     # -------------------------
-    
+    if Path(models).exists():
+        print("Loading existing model:")
+        model = Load_model.load_model(model_name, n_in, n_out, n_hid)
+        model.load_state_dict(torch.load(models))
+    else:
+        print("Training new model...")
+        model = Load_model.load_model(model_name, n_in, n_out, n_hid)
+
+
+
     training_sequences = []
 
     # Find all training sequences in the data folder
-    base_folder = Path("data/preprocessed/done4")
+    base_folder = Path("done4")
 
     for ship_folder in base_folder.iterdir():
         if not ship_folder.is_dir():
@@ -232,8 +241,10 @@ if __name__ == "__main__":
 
     train_loss_total = []
     val_loss_total = []
-    
+    avg_test_loss = []
+    i = 0
     for seq in training_sequences:
+        
         print("Training on sequence:", seq)
         # Load data
         input_file = seq
@@ -249,6 +260,18 @@ if __name__ == "__main__":
         # Choose sequence length (number of timesteps per sample)
         seq_len = 50
         
+        # Check if we have enough data for at least one sequence
+        # We need at least seq_len + 1 samples
+        if len(train_X) <= seq_len + 1:
+            print(f"Skipping sequence {seq}: Train set too small ({len(train_X)} <= {seq_len + 1})")
+            continue
+        
+        if len(val_X) <= seq_len + 1:
+             # If validation is too small, we can either skip validation or skip the whole file.
+             # Usually better to skip the file to avoid errors in val_loader
+             print(f"Skipping sequence {seq}: Val set too small ({len(val_X)} <= {seq_len + 1})")
+             continue
+
         # Create datasets and dataloaders
         train_dataset = AISTrajectorySeq2Seq(train_X, train_y, seq_len)
         val_dataset   = AISTrajectorySeq2Seq(val_X,   val_y,   seq_len)
@@ -259,24 +282,33 @@ if __name__ == "__main__":
         val_loader   = DataLoader(val_dataset,   batch_size=32, shuffle=False)
         test_loader  = DataLoader(test_dataset,  batch_size=32, shuffle=False)
         
-        if Path(models).exists():
-            print("Loading existing model:")
-            model = Load_model.load_model(model_name, n_in, n_out, n_hid)
-            model.load_state_dict(torch.load(models))
-        else:
-            print("Training new model...")
-            model = Load_model.load_model(model_name, n_in, n_out, n_hid)
 
-            train_loss, val_loss = train(
-                model,
-                train_loader,
-                val_loader,
-                num_epochs=epochs,
-                learning_rate=lr,
-            )
-            train_loss_total.extend(train_loss)
-            val_loss_total.extend(val_loss)
-            
+        train_loss, val_loss = train(
+            model,
+            train_loader,
+            val_loader,
+            num_epochs=epochs,
+            learning_rate=lr,
+        )
+
+        # Predict the test set vs true values
+        model.eval()
+        err = 0.0
+        with torch.no_grad():
+            for batch in test_loader:
+                inputs, targets = batch
+                outputs = model(inputs)
+                # Compare outputs with targets
+                error = nn.MSELoss()(outputs, targets)
+                err += error.item()
+        avg_err = err / len(test_loader)
+
+        train_loss_total.extend(train_loss)
+        val_loss_total.extend(val_loss)
+        avg_test_loss.append(avg_err)
+        if i == 200:
+            break
+        i += 1
     # Save model
     torch.save(model.state_dict(), models)
     plot = True
@@ -288,5 +320,15 @@ if __name__ == "__main__":
         plt.ylabel("Loss")
         plt.legend()
         plt.title("reports/Training and Validation Loss")
-        plt.savefig("reports/training_validation_loss_temp.png")
+        #plt.savefig("reports/training_validation_loss_temp.png")
+        plt.show()
+
+        # Show test loss
+        plt.figure()
+        plt.plot(avg_test_loss, label="Test Loss")
+        plt.xlabel("Sequence")
+        plt.ylabel("Loss")
+        plt.legend()
+        plt.title("reports/Test Loss")
+        #plt.savefig("reports/test_loss_temp.png")
         plt.show()
