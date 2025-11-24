@@ -313,7 +313,7 @@ if __name__ == "__main__":
         train_loss_total.extend(train_loss)
         val_loss_total.extend(val_loss)
         avg_test_loss.append(avg_err)
-        if i == 2:
+        if i == 200:
             break
         i += 1
     # Save model
