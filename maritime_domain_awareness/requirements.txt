@@ -4,3 +4,5 @@ fastapi==0.115.12
 uvicorn==0.34.2
 pandas==2.3.3
 scikit-learn==1.7.2
+matplotlib==3.10.7
+einops==0.8.1
