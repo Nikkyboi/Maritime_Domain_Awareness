@@ -24,7 +24,6 @@ class KalmanFilter:
         self.measurement_variance = float(measurement_variance)
         self.init_error = float(init_error)
 
-        # work on a local copy of the dataframe-like object
         self.df = df.copy()
 
         # initialize Kalman matrices
@@ -76,9 +75,6 @@ class KalmanFilter:
 
     def predict(self):
         """Run the prediction step."""
-
-        if self.x_est is None:
-            raise RuntimeError("Filter state not initialized")
 
         self.x_pred = self.A @ self.x_est + self.B @ self.u
         self.P_pred = self.A @ self.P @ self.A.T + self.Q
