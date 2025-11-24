@@ -61,9 +61,9 @@ def load_and_split_data(
     
 
     # Select input + output columns
-    #in_cols  = ["Latitude", "Longitude", "SOG", "COG", "Heading"]
-    in_cols  = ["Latitude", "Longitude"]
-    out_cols = ["Latitude", "Longitude"]
+    in_cols  = ["X", "Y", "Z", "SOG", "COG", "Heading", "DeltaT"]
+    # in_cols  = ["Latitude", "Longitude"]
+    out_cols = ["X", "Y", "Z"]
 
     # Basic sanity check
     for c in in_cols + out_cols:
@@ -193,7 +193,10 @@ if __name__ == "__main__":
     
     carophy
     """
-    
+    device = None
+
+    if device is None:
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     # --------------------------
     
     # Choose the name of the model to train
@@ -204,9 +207,9 @@ if __name__ == "__main__":
     models = "models/ais_" + model_name + "_model.pth"
     
     # Inputs, Hidden, Outputs
-    n_in = 2    # lat, lon
+    n_in = 7    # lat, lon
     n_hid = 64  # hidden size
-    n_out = 2   # lat, lon
+    n_out = 3   # lat, lon
     
     # Epochs and learning rate
     epochs = 5
@@ -226,7 +229,7 @@ if __name__ == "__main__":
     training_sequences = []
 
     # Find all training sequences in the data folder
-    base_folder = Path("done4")
+    base_folder = Path("data/Processed")
 
     for ship_folder in base_folder.iterdir():
         if not ship_folder.is_dir():
@@ -289,9 +292,11 @@ if __name__ == "__main__":
             val_loader,
             num_epochs=epochs,
             learning_rate=lr,
+            device = device
         )
 
         # Predict the test set vs true values
+        model.to(device)
         model.eval()
         err = 0.0
         with torch.no_grad():
