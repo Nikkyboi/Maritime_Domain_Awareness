@@ -168,7 +168,7 @@ def train(model : nn.Module,
 
         avg_val_loss = val_loss / max(val_batches, 1)
         validation_loss.append(avg_val_loss)
-        print(f"Epoch {epoch+1}/{num_epochs}, Train Loss: {avg_train_loss:.4f}, Val Loss: {avg_val_loss:.4f}")
+        print(f"Epoch {epoch+1}/{num_epochs}, Train Loss: {avg_train_loss:.8f}, Val Loss: {avg_val_loss:.8f}")
 
     return training_loss, validation_loss, 
 
@@ -219,7 +219,8 @@ if __name__ == "__main__":
     if Path(models).exists():
         print("Loading existing model:")
         model = Load_model.load_model(model_name, n_in, n_out, n_hid)
-        model.load_state_dict(torch.load(models))
+        state = torch.load(models, map_location=device)
+        model.load_state_dict(state)
     else:
         print("Training new model...")
         model = Load_model.load_model(model_name, n_in, n_out, n_hid)
@@ -302,6 +303,15 @@ if __name__ == "__main__":
         with torch.no_grad():
             for batch in test_loader:
                 inputs, targets = batch
+                # Move tensors to the same device as the model
+                inputs = inputs.to(device)
+                targets = targets.to(device)
+
+                # If the model expects sequences with time-first (T, B, F)
+                # transpose like in the training/validation loops
+                if getattr(model, 'batch_first', False) is False:
+                    inputs = inputs.transpose(0, 1)
+                    targets = targets.transpose(0, 1)
                 outputs = model(inputs)
                 # Compare outputs with targets
                 error = nn.MSELoss()(outputs, targets)
@@ -311,7 +321,7 @@ if __name__ == "__main__":
         train_loss_total.extend(train_loss)
         val_loss_total.extend(val_loss)
         avg_test_loss.append(avg_err)
-        if i == 200:
+        if i == 20:
             break
         i += 1
     # Save model
