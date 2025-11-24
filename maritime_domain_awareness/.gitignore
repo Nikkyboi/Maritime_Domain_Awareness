@@ -4,6 +4,8 @@ data/Processed/*
 
 docs/site/
 
+*.parquet
+*.csv 
 # test cache
 manual_test/
 

@@ -189,31 +189,12 @@ if __name__ == "__main__":
     [B, T, n_out]
     It gets transposed to [T, B, n_in] if model.batch_first is False.
     
+    car2pi
+    
+    carophy
     """
     
-    # Only training on one ship
-    input_file = "data/Raw/2025-03-01/training_example_temp.csv"
-    
-    # split into train, test and validation sets:
-    # Input = latitude, longitude, sog, cog, heading
-    # Output = latitude, longitude
-    # split 70/15/15
-    (train_X, train_y), (val_X, val_y), (test_X, test_y) = load_and_split_data(input_file)
-    print("X_train.shape:", train_X.shape)
-    print("y_train.shape:", train_y.shape)
-
-    # Choose sequence length (number of timesteps per sample)
-    seq_len = 50
-    
-    # Create datasets and dataloaders
-    train_dataset = AISTrajectorySeq2Seq(train_X, train_y, seq_len)
-    val_dataset   = AISTrajectorySeq2Seq(val_X,   val_y,   seq_len)
-    test_dataset  = AISTrajectorySeq2Seq(test_X,  test_y,  seq_len)
-
-    # Create data loaders
-    train_loader = DataLoader(train_dataset, batch_size=32, shuffle=True)
-    val_loader   = DataLoader(val_dataset,   batch_size=32, shuffle=False)
-    test_loader  = DataLoader(test_dataset,  batch_size=32, shuffle=False)
+    # --------------------------
     
     # Choose the name of the model to train
     # Options: "rnn", "lstm", "gru", "transformer" & "mamba"
@@ -231,28 +212,78 @@ if __name__ == "__main__":
     epochs = 5
     lr = 1e-3
     
-    if Path(models).exists():
-        print("Loading existing model:")
-        model = Load_model.load_model(model_name, n_in, n_out, n_hid)
-        model.load_state_dict(torch.load(models))
-    else:
-        print("Training new model...")
-        model = Load_model.load_model(model_name, n_in, n_out, n_hid)
-
-        train_loss, val_loss = train(
-            model,
-            train_loader,
-            val_loader,
-            num_epochs=epochs,
-            learning_rate=lr,
-        )
-        
-        # Save model
-        torch.save(model.state_dict(), models)
+    # -------------------------
     
+    training_sequences = []
+
+    # Find all training sequences in the data folder
+    base_folder = Path("data/preprocessed/done4")
+
+    for ship_folder in base_folder.iterdir():
+        if not ship_folder.is_dir():
+            continue
+        for inner_folder in ship_folder.iterdir():
+            if not inner_folder.is_dir():
+                continue
+            for parquet_file in inner_folder.glob("*.parquet"):
+                training_sequences.append(parquet_file)
+
+    print("Found training sequences:", len(training_sequences))
+
+    train_loss_total = []
+    val_loss_total = []
+    
+    for seq in training_sequences:
+        print("Training on sequence:", seq)
+        # Load data
+        input_file = seq
+        
+        # split into train, test and validation sets:
+        # Input = latitude, longitude, sog, cog, heading
+        # Output = latitude, longitude
+        # split 70/15/15
+        (train_X, train_y), (val_X, val_y), (test_X, test_y) = load_and_split_data(input_file)
+        print("X_train.shape:", train_X.shape)
+        print("y_train.shape:", train_y.shape)
+
+        # Choose sequence length (number of timesteps per sample)
+        seq_len = 50
+        
+        # Create datasets and dataloaders
+        train_dataset = AISTrajectorySeq2Seq(train_X, train_y, seq_len)
+        val_dataset   = AISTrajectorySeq2Seq(val_X,   val_y,   seq_len)
+        test_dataset  = AISTrajectorySeq2Seq(test_X,  test_y,  seq_len)
+
+        # Create data loaders
+        train_loader = DataLoader(train_dataset, batch_size=32, shuffle=True)
+        val_loader   = DataLoader(val_dataset,   batch_size=32, shuffle=False)
+        test_loader  = DataLoader(test_dataset,  batch_size=32, shuffle=False)
+        
+        if Path(models).exists():
+            print("Loading existing model:")
+            model = Load_model.load_model(model_name, n_in, n_out, n_hid)
+            model.load_state_dict(torch.load(models))
+        else:
+            print("Training new model...")
+            model = Load_model.load_model(model_name, n_in, n_out, n_hid)
+
+            train_loss, val_loss = train(
+                model,
+                train_loader,
+                val_loader,
+                num_epochs=epochs,
+                learning_rate=lr,
+            )
+            train_loss_total.extend(train_loss)
+            val_loss_total.extend(val_loss)
+            
+    # Save model
+    torch.save(model.state_dict(), models)
+    plot = True
+    if plot == True:
         # Show training and validation loss
-        plt.plot(train_loss, label="Train Loss")
-        plt.plot(val_loss, label="Validation Loss")
+        plt.plot(train_loss_total, label="Train Loss")
+        plt.plot(val_loss_total, label="Validation Loss")
         plt.xlabel("Epoch")
         plt.ylabel("Loss")
         plt.legend()
