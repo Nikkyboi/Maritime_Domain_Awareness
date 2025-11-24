@@ -6,3 +6,4 @@ pandas==2.3.3
 scikit-learn==1.7.2
 matplotlib==3.10.7
 einops==0.8.1
+mlstm_kernels==2.0.2
