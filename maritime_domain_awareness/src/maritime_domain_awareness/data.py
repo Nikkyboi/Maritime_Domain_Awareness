@@ -30,7 +30,7 @@ class MyDataset(Dataset):
     def preprocess(self, output_folder: Path) -> None:
         """Preprocess the raw data and save it to the output folder."""
 
-        
+
 
 def fn(file_path, out_path):
     # ----- read -----
@@ -72,6 +72,7 @@ def fn(file_path, out_path):
     # Include filtering for word "Trawl Fishing" or a subset of that string in the destination column
     # Consider whether simply dropping observations where any feature has a null value is the right move.
     # Alternatively, could simply drop the features that frequently has null values
+    # Normalize features
 
     # ----- fishing vessel filters -----
     # Normalize helper
@@ -131,6 +132,20 @@ def fn(file_path, out_path):
     # ----- units -----
     df["SOG"] = 0.514444 * df["SOG"]  # knots → m/s
 
+
+    # ----- normalization of features -----
+    norm_cols = ["SOG", "COG", "Heading", "DeltaT"]
+    for col in norm_cols:
+        mean = df[col].mean()
+        std = df[col].std()
+
+        # avoid division-by-zero / NaN for constant or degenerate columns
+        if std == 0 or not np.isfinite(std):
+            std = 1.0
+
+        df[col] = (df[col] - mean) / std
+
+    # ----- filter for ships at port -----
     def make_port_boundaries(data_path: Path = "data/Raw/port_locodes.csv"):
         df = pandas.read_csv(data_path,sep=";")
         dictionary = dict()
@@ -150,7 +165,6 @@ def fn(file_path, out_path):
         return not polygon.contains(point)
 
     ports = make_port_boundaries()
-
 
     for port in ports:
         polygon = Polygon(ports[port])
@@ -185,7 +199,7 @@ def fn(file_path, out_path):
 
 
 
-def preprocess(data_path: Path = "data/Raw/aisdk-2025-01-01.csv", output_folder: Path = "data/Processed/") -> None:
+def preprocess(data_path: Path = "data/Raw/aisdk-2025-03-01.csv", output_folder: Path = "data/Processed/") -> None:
     print("Preprocessing data...")
     fn(data_path, output_folder)
     
