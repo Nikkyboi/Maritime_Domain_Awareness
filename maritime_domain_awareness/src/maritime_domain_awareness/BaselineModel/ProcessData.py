@@ -1,6 +1,7 @@
 import pandas as pd
 import glob
 from pathlib import Path
+import numpy as np
 
 
 def load_parquet_files(data_path):
@@ -157,7 +158,41 @@ def extract_ground_truth(df_test, prediction_steps):
     ground_truth : np.ndarray
         Array of shape (prediction_steps, 2) with [lat, lon]
     """
-    return df_test[['Latitude', 'Longitude']].values[:prediction_steps]
+    # Make a local copy to avoid mutating caller's DataFrame
+    df = df_test.copy()
+
+    # Helper: find columns by lowercase name mapping
+    cols_map = {c.lower(): c for c in df.columns}
+
+    if 'latitude' in cols_map and 'longitude' in cols_map:
+        lat_col = cols_map['latitude']
+        lon_col = cols_map['longitude']
+        return df[[lat_col, lon_col]].values[:prediction_steps]
+
+    # Fallback: reconstruct from unit-sphere coordinates X, Y, Z
+    if all(k in cols_map for k in ('x', 'y', 'z')):
+        x = df[cols_map['x']].to_numpy(dtype=float)
+        y = df[cols_map['y']].to_numpy(dtype=float)
+        z = df[cols_map['z']].to_numpy(dtype=float)
+
+        # Protect against out-of-range due to numerical noise
+        z = np.clip(z, -1.0, 1.0)
+
+        lat_rad = np.arcsin(z)
+        lon_rad = np.arctan2(y, x)
+
+        lat_deg = np.degrees(lat_rad)
+        lon_deg = np.degrees(lon_rad)
+
+        gt = np.column_stack([lat_deg, lon_deg])
+        return gt[:prediction_steps]
+
+    # Nothing we can do: raise clear error for the user
+    raise KeyError(
+        "DataFrame is missing 'Latitude'/'Longitude' columns and cannot reconstruct them. "
+        "Expected either 'Latitude' and 'Longitude', or 'X','Y','Z' unit-sphere columns. "
+        f"Available columns: {list(df.columns)}"
+    )
 
 
 

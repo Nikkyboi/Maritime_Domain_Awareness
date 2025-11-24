@@ -1,9 +1,6 @@
 import sys
 from pathlib import Path
-try:
-    from .evaluate import evaluate_predictions, print_evaluation_results
-except ImportError:
-    from maritime_domain_awareness.BaselineModel.evaluate import evaluate_predictions, print_evaluation_results
+from evaluate import evaluate_predictions, print_evaluation_results
 
 
 def main():

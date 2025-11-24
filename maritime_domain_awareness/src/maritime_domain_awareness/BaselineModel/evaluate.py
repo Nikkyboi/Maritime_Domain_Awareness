@@ -1,6 +1,6 @@
 import numpy as np
 from pathlib import Path
-from maritime_domain_awareness.BaselineModel.ProcessData import (
+from ProcessData import (
     load_parquet_files,
     load_and_prepare_data,
     split_train_test,
@@ -8,9 +8,9 @@ from maritime_domain_awareness.BaselineModel.ProcessData import (
     validate_data_size,
     extract_ground_truth
 )
-from maritime_domain_awareness.BaselineModel.KalmanFilter import KALMAN_Filter
-from maritime_domain_awareness.BaselineModel.Predict import predict_future_position, calculate_prediction_metrics
-from maritime_domain_awareness.BaselineModel.validate import validate_baselineModel, calculate_distance_errors
+from KalmanFilter import KALMAN_Filter
+from Predict import predict_future_position, calculate_prediction_metrics
+from validate import validate_baselineModel, calculate_distance_errors
 
 
 def evaluate_single_file(file_path, prediction_minutes=30, train_split=0.8):
