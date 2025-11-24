@@ -30,7 +30,7 @@ class MyDataset(Dataset):
     def preprocess(self, output_folder: Path) -> None:
         """Preprocess the raw data and save it to the output folder."""
 
-        
+
 
 def fn(file_path, out_path):
     # ----- read -----
@@ -72,6 +72,7 @@ def fn(file_path, out_path):
     # Include filtering for word "Trawl Fishing" or a subset of that string in the destination column
     # Consider whether simply dropping observations where any feature has a null value is the right move.
     # Alternatively, could simply drop the features that frequently has null values
+    # Normalize features
 
     # ----- fishing vessel filters -----
     # Normalize helper
@@ -185,7 +186,7 @@ def fn(file_path, out_path):
 
 
 
-def preprocess(data_path: Path = "data/Raw/aisdk-2025-01-01.csv", output_folder: Path = "data/Processed/") -> None:
+def preprocess(data_path: Path = "data/Raw/aisdk-2025-03-01.csv", output_folder: Path = "data/Processed/") -> None:
     print("Preprocessing data...")
     fn(data_path, output_folder)
     
