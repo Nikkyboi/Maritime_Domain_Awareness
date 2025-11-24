@@ -21,12 +21,12 @@ def PlotToWorldMap(actualPoint=None, predictedPoint=None):
         act_np = act_np.reshape(-1, 2)
         pred_np = pred_np.reshape(-1, 2)
         for pt in act_np:
-            actual_lons.append(pt[0])
-            actual_lats.append(pt[1])
+            actual_lons.append(pt[1])
+            actual_lats.append(pt[0])
         for pt in pred_np:
-            predicted_lons.append(pt[0])
-            predicted_lats.append(pt[1])
-
+            predicted_lons.append(pt[1])
+            predicted_lats.append(pt[0])
+            
     ax.plot(actual_lons, actual_lats, 'o-', color='green', label='Actual', transform=ccrs.PlateCarree())
     ax.plot(predicted_lons, predicted_lats, 'x-', color='red', label='Predicted', transform=ccrs.PlateCarree())
     ax.legend()

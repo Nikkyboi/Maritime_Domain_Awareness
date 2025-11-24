@@ -201,7 +201,7 @@ if __name__ == "__main__":
     
     # Choose the name of the model to train
     # Options: "rnn", "lstm", "gru", "transformer", "kalman" & "mamba"
-    model_name = "Transformer"
+    model_name = "transformer"
 
     # Look for the existing model
     if model_name == "kalman":
