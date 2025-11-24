@@ -7,6 +7,7 @@ import torch
 from torch.utils.data import TensorDataset, DataLoader, Dataset
 from torch import nn
 from models import Load_model
+from PlotToWorldMap import PlotToWorldMap
 
 class AISTrajectorySeq2Seq(Dataset):
     """
@@ -226,7 +227,7 @@ if __name__ == "__main__":
     training_sequences = []
 
     # Find all training sequences in the data folder
-    base_folder = Path("done4")
+    base_folder = Path("maritime_domain_awareness/data/Processed")
 
     for ship_folder in base_folder.iterdir():
         if not ship_folder.is_dir():
@@ -290,7 +291,9 @@ if __name__ == "__main__":
             num_epochs=epochs,
             learning_rate=lr,
         )
-
+        predictedPoint = []
+        actualPoint = []
+        
         # Predict the test set vs true values
         model.eval()
         err = 0.0
@@ -299,17 +302,22 @@ if __name__ == "__main__":
                 inputs, targets = batch
                 outputs = model(inputs)
                 # Compare outputs with targets
+                predictedPoint.append(outputs)
+                actualPoint.append(targets)
                 error = nn.MSELoss()(outputs, targets)
                 err += error.item()
+        predictedPoint = torch.cat(predictedPoint, dim=0)
+        actualPoint = torch.cat(actualPoint, dim=0)
         avg_err = err / len(test_loader)
 
         train_loss_total.extend(train_loss)
         val_loss_total.extend(val_loss)
         avg_test_loss.append(avg_err)
-        if i == 200:
+        if i == 2:
             break
         i += 1
     # Save model
+    PlotToWorldMap(actualPoint = actualPoint, predictedPoint = predictedPoint)
     torch.save(model.state_dict(), models)
     plot = True
     if plot == True:
