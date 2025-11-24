@@ -132,6 +132,20 @@ def fn(file_path, out_path):
     # ----- units -----
     df["SOG"] = 0.514444 * df["SOG"]  # knots → m/s
 
+
+    # ----- normalization of features -----
+    norm_cols = ["SOG", "COG", "Heading", "DeltaT"]
+    for col in norm_cols:
+        mean = df[col].mean()
+        std = df[col].std()
+
+        # avoid division-by-zero / NaN for constant or degenerate columns
+        if std == 0 or not np.isfinite(std):
+            std = 1.0
+
+        df[col] = (df[col] - mean) / std
+
+    # ----- filter for ships at port -----
     def make_port_boundaries(data_path: Path = "data/Raw/port_locodes.csv"):
         df = pandas.read_csv(data_path,sep=";")
         dictionary = dict()
@@ -151,7 +165,6 @@ def fn(file_path, out_path):
         return not polygon.contains(point)
 
     ports = make_port_boundaries()
-
 
     for port in ports:
         polygon = Polygon(ports[port])
