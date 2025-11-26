@@ -9,30 +9,115 @@ from sklearn.cluster import KMeans
 import pandas as pd
 import numpy as np
 import torch
+from typing import Dict, Iterable, Tuple
 
 from shapely.geometry import Point
 from shapely.geometry.polygon import Polygon
 
 
+# ----------------------------------------------------------------------
+# Normalization helpers
+# ----------------------------------------------------------------------
+def compute_normalization_stats(
+    df: pd.DataFrame,
+    columns: Iterable[str],
+) -> Dict[str, Tuple[float, float]]:
+    """
+    Compute mean/std for each column in `columns`.
 
-class MyDataset(Dataset):
-    """My custom dataset."""
+    For degenerate columns (std == 0 or non-finite), std is set to 1.0 so that
+    normalization is well-defined. The *effective* std used is what gets stored.
+    """
+    stats: Dict[str, Tuple[float, float]] = {}
+    for col in columns:
+        mean = df[col].mean()
+        std = df[col].std()
 
-    def __init__(self, data_path: Path) -> None:
-        self.data_path = data_path
+        if std == 0 or not np.isfinite(std):
+            std = 1.0
 
-    def __len__(self) -> int:
-        """Return the length of the dataset."""
-
-    def __getitem__(self, index: int):
-        """Return a given sample from the dataset."""
-
-    def preprocess(self, output_folder: Path) -> None:
-        """Preprocess the raw data and save it to the output folder."""
-
+        stats[col] = (float(mean), float(std))
+    return stats
 
 
-def fn(file_path, out_path):
+def apply_normalization(
+    df: pd.DataFrame,
+    stats: Dict[str, Tuple[float, float]],
+) -> pd.DataFrame:
+    """
+    Normalize columns in-place using pre-computed stats {col: (mean, std)}.
+
+    x_norm = (x - mean) / std
+    """
+    for col, (mean, std) in stats.items():
+        if col in df.columns:
+            df[col] = (df[col] - mean) / std
+    return df
+
+
+def invert_normalization(
+    df: pd.DataFrame,
+    stats: Dict[str, Tuple[float, float]],
+) -> pd.DataFrame:
+    """
+    Invert normalization in-place using stats {col: (mean, std)}.
+
+    x = x_norm * std + mean
+    """
+    for col, (mean, std) in stats.items():
+        if col in df.columns:
+            df[col] = df[col] * std + mean
+    return df
+
+ 
+
+# ECEF unit-vector helpers
+# ----------------------------------------------------------------------
+def latlon_to_ecef_unit(
+    lat_deg: np.ndarray | pd.Series,
+    lon_deg: np.ndarray | pd.Series,
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """
+    Convert latitude/longitude in degrees to ECEF unit vectors (X, Y, Z).
+
+    Assumes a unit sphere Earth and ignores height.
+    """
+    lat_rad = np.deg2rad(lat_deg)
+    lon_rad = np.deg2rad(lon_deg)
+
+    cos_lat = np.cos(lat_rad)
+    x = cos_lat * np.cos(lon_rad)
+    y = cos_lat * np.sin(lon_rad)
+    z = np.sin(lat_rad)
+
+    return x, y, z
+
+
+def ecef_unit_to_latlon(
+    x: np.ndarray | pd.Series,
+    y: np.ndarray | pd.Series,
+    z: np.ndarray | pd.Series,
+) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    Convert ECEF unit vectors (X, Y, Z) back to latitude/longitude in degrees.
+    """
+    x_arr = np.asarray(x)
+    y_arr = np.asarray(y)
+    z_arr = np.asarray(z)
+
+    hyp = np.sqrt(x_arr**2 + y_arr**2)
+    lat_rad = np.arctan2(z_arr, hyp)
+    lon_rad = np.arctan2(y_arr, x_arr)
+
+    lat_deg = np.rad2deg(lat_rad)
+    lon_deg = np.rad2deg(lon_rad)
+
+    return lat_deg, lon_deg
+
+
+
+
+def preprocess(file_path: Path = "data/Raw/aisdk-2025-03-01.csv", out_path: Path = "data/Processed/") -> None:
     # ----- read -----
     dtypes = {
         "MMSI": "object",
@@ -69,10 +154,8 @@ def fn(file_path, out_path):
     df = df[df["MMSI"].astype(str).str.startswith(("219", "220"))]
 
     # TODO: 
-    # Include filtering for word "Trawl Fishing" or a subset of that string in the destination column
     # Consider whether simply dropping observations where any feature has a null value is the right move.
-    # Alternatively, could simply drop the features that frequently has null values
-    # Normalize features
+    # Alternatively, could simply drop the features that frequently has null values, or estimate values instead of null.
 
     # ----- fishing vessel filters -----
     # Normalize helper
@@ -135,15 +218,9 @@ def fn(file_path, out_path):
 
     # ----- normalization of features -----
     norm_cols = ["SOG", "COG", "Heading", "DeltaT"]
-    for col in norm_cols:
-        mean = df[col].mean()
-        std = df[col].std()
-
-        # avoid division-by-zero / NaN for constant or degenerate columns
-        if std == 0 or not np.isfinite(std):
-            std = 1.0
-
-        df[col] = (df[col] - mean) / std
+    norm_stats = compute_normalization_stats(df, norm_cols)
+    # If you want to reuse these stats elsewhere (e.g. eval), persist `norm_stats`.
+    df = apply_normalization(df, norm_stats)
 
     # ----- filter for ships at port -----
     def make_port_boundaries(data_path: Path = "data/Raw/port_locodes.csv"):
@@ -173,17 +250,11 @@ def fn(file_path, out_path):
 
 
     # ---- ECEF unit vectors from lat/lon ----
-    # degrees → radians
-    lat_rad = np.deg2rad(df["Latitude"].values)
-    lon_rad = np.deg2rad(df["Longitude"].values)
-
-    # unit sphere, origin at Earth's center
-    # assuming spherical Earth; height ignored
-    cos_lat = np.cos(lat_rad)
-    df["X"] = cos_lat * np.cos(lon_rad)
-    df["Y"] = cos_lat * np.sin(lon_rad)
-    df["Z"] = np.sin(lat_rad)
-
+    df["X"], df["Y"], df["Z"] = latlon_to_ecef_unit(
+        df["Latitude"].values,
+        df["Longitude"].values,
+    )
+    
     
     # ----- Drop columns we don't want model training on ------
     df = df.drop(columns=["Navigational status", "Ship type", "Timestamp", "Latitude", "Longitude"])
@@ -197,14 +268,6 @@ def fn(file_path, out_path):
     )
 
 
-
-
-def preprocess(data_path: Path = "data/Raw/aisdk-2025-03-01.csv", output_folder: Path = "data/Processed/") -> None:
-    print("Preprocessing data...")
-    fn(data_path, output_folder)
-    
-    #dataset = MyDataset(data_path)
-    #dataset.preprocess(output_folder)
 
 if __name__ == "__main__":
     typer.run(preprocess)
