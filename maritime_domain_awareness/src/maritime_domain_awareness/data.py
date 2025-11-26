@@ -119,6 +119,16 @@ def ecef_unit_to_latlon(
 
 def preprocess(file_path: Path = "data/Raw/aisdk-2025-03-01.csv", out_path: Path = "data/Processed/") -> None:
     # ----- read -----
+
+    # Get the project root (maritime_domain_awareness folder)
+    project_root = Path(__file__).resolve().parents[3]
+    
+    if file_path is None:
+        file_path = project_root / "maritime_domain_awareness" / "data" / "Raw" / "aisdk-2025-03-01.csv"
+    
+    if out_path is None:
+        out_path = project_root / "maritime_domain_awareness" / "data" / "Processed"
+
     dtypes = {
         "MMSI": "object",
         "SOG": float,
@@ -222,7 +232,7 @@ def preprocess(file_path: Path = "data/Raw/aisdk-2025-03-01.csv", out_path: Path
     # If you want to reuse these stats elsewhere (e.g. eval), persist `norm_stats`.
     df = apply_normalization(df, norm_stats)
 
-    # ----- filter for ships at port -----
+    # # ----- filter for ships at port -----
     def make_port_boundaries(data_path: Path = "data/Raw/port_locodes.csv"):
         df = pandas.read_csv(data_path,sep=";")
         dictionary = dict()
@@ -270,4 +280,5 @@ def preprocess(file_path: Path = "data/Raw/aisdk-2025-03-01.csv", out_path: Path
 
 
 if __name__ == "__main__":
+    print("Preprocessing data...")
     typer.run(preprocess)
