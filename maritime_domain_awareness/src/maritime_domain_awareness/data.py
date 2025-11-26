@@ -233,29 +233,29 @@ def preprocess(file_path: Path = "data/Raw/aisdk-2025-03-01.csv", out_path: Path
     df = apply_normalization(df, norm_stats)
 
     # # ----- filter for ships at port -----
-    def make_port_boundaries(data_path: Path = "data/Raw/port_locodes.csv"):
-        df = pandas.read_csv(data_path,sep=";")
-        dictionary = dict()
-        for row in df.itertuples(index = False, name = None):
-                name, code, coords = row
-                if not code.startswith("DK"):
-                    continue
-                this_coord = []
-                for coord in coords.split(","):
-                    longitude,latitude = coord.split()
-                    this_coord.append((float(longitude),float(latitude)))
-                dictionary[code] = this_coord
-        return dictionary
+    # def make_port_boundaries(data_path: Path = "data/Raw/port_locodes.csv"):
+    #     df = pandas.read_csv(data_path,sep=";")
+    #     dictionary = dict()
+    #     for row in df.itertuples(index = False, name = None):
+    #             name, code, coords = row
+    #             if not code.startswith("DK"):
+    #                 continue
+    #             this_coord = []
+    #             for coord in coords.split(","):
+    #                 longitude,latitude = coord.split()
+    #                 this_coord.append((float(longitude),float(latitude)))
+    #             dictionary[code] = this_coord
+    #     return dictionary
 
-    def point_in_polygon(row):
-        point = Point(row["Longitude"],row["Latitude"])
-        return not polygon.contains(point)
+    # def point_in_polygon(row):
+    #     point = Point(row["Longitude"],row["Latitude"])
+    #     return not polygon.contains(point)
 
-    ports = make_port_boundaries()
+    # ports = make_port_boundaries()
 
-    for port in ports:
-        polygon = Polygon(ports[port])
-        df = df[df.apply(point_in_polygon,axis=1)]
+    # for port in ports:
+    #     polygon = Polygon(ports[port])
+    #     df = df[df.apply(point_in_polygon,axis=1)]
 
 
 

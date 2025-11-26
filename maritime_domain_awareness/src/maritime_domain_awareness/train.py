@@ -7,7 +7,7 @@ import torch
 from torch.utils.data import TensorDataset, DataLoader, Dataset
 from torch import nn
 from models import Load_model
-from PlotToWorldMap import PlotToWorldMap
+# from PlotToWorldMap import PlotToWorldMap
 from KalmanFilterWrapper import KalmanFilterWrapper
 
 class AISTrajectorySeq2Seq(Dataset):
@@ -330,20 +330,36 @@ if __name__ == "__main__":
                 inputs = inputs.to(device)
                 targets = targets.to(device)
 
-                # If the model expects sequences with time-first (T, B, F)
-                # transpose like in the training/validation loops
+                # Keep the original targets in batch-first form for metrics/append
+                # DataLoader yields [B, T, F] already, so keep raw_targets that way.
+                raw_targets = targets
+
+                # If the model expects time-first (T, B, F), transpose inputs for model.
                 if getattr(model, 'batch_first', False) is False:
-                    inputs = inputs.transpose(0, 1)
-                    targets = targets.transpose(0, 1)
-                outputs = model(inputs)
-                # Ensure both outputs and targets are [batch_size, seq_len, n_out]
-                if outputs.dim() == 2:
-                    outputs = outputs.unsqueeze(0)
-                if targets.dim() == 2:
-                    targets = targets.unsqueeze(0)
+                    inputs_for_model = inputs.transpose(0, 1)
+                else:
+                    inputs_for_model = inputs
+
+                outputs = model(inputs_for_model)
+
+                # Normalize outputs to batch-first shape [B, T, F]
+                if outputs.dim() == 3:
+                    # model likely returned [T, B, F] when batch_first is False
+                    if getattr(model, 'batch_first', False) is False:
+                        outputs = outputs.transpose(0, 1)  # -> [B, T, F]
+                elif outputs.dim() == 2:
+                    # single-timestep output [B, F] -> add time dim
+                    outputs = outputs.unsqueeze(1)  # [B, 1, F]
+
+                # Ensure raw_targets also has a time-dimension: [B, T, F]
+                if raw_targets.dim() == 2:
+                    raw_targets = raw_targets.unsqueeze(1)
+
+                # Now outputs and raw_targets should both be [B, T, F]
                 predictedPoint.append(outputs)
-                actualPoint.append(targets)
-                error = nn.MSELoss()(outputs, targets)
+                actualPoint.append(raw_targets)
+
+                error = nn.MSELoss()(outputs, raw_targets)
                 err += error.item()
         predictedPoint = torch.cat(predictedPoint, dim=0)
         actualPoint = torch.cat(actualPoint, dim=0)
@@ -356,7 +372,7 @@ if __name__ == "__main__":
             break
         i += 1
     # Save model
-    PlotToWorldMap(actualPoint = actualPoint, predictedPoint = predictedPoint)
+    # PlotToWorldMap(actualPoint = actualPoint, predictedPoint = predictedPoint)
     torch.save(model.state_dict(), models)
     plot = True
     if plot == True:
