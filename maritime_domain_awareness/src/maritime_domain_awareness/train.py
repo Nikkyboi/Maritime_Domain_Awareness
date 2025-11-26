@@ -7,6 +7,8 @@ import torch
 from torch.utils.data import TensorDataset, DataLoader, Dataset
 from torch import nn
 from models import Load_model
+from PlotToWorldMap import PlotToWorldMap
+from KalmanFilterWrapper import KalmanFilterWrapper
 
 class AISTrajectorySeq2Seq(Dataset):
     """
@@ -183,6 +185,7 @@ if __name__ == "__main__":
     - RNN_models.myGRU
     - Transformer_model.myTransformer
     - Mamba_model.Mamba
+    - Kalman filter
     
     Because AISTrajectorySeq2Seq dataset returns sequences of shape:
     [B, T, n_in]
@@ -200,11 +203,14 @@ if __name__ == "__main__":
     # --------------------------
     
     # Choose the name of the model to train
-    # Options: "rnn", "lstm", "gru", "transformer" & "mamba"
-    model_name = "Transformer"
+    # Options: "rnn", "lstm", "gru", "transformer", "kalman" & "mamba"
+    model_name = "transformer"
 
     # Look for the existing model
-    models = "models/ais_" + model_name + "_model.pth"
+    if model_name == "kalman":
+        models = "kalman"
+    else:
+        models = "models/ais_" + model_name + "_model.pth"
     
     # Inputs, Hidden, Outputs
     n_in = 7    # lat, lon
@@ -219,8 +225,9 @@ if __name__ == "__main__":
     if Path(models).exists():
         print("Loading existing model:")
         model = Load_model.load_model(model_name, n_in, n_out, n_hid)
-        state = torch.load(models, map_location=device)
-        model.load_state_dict(state)
+        model.load_state_dict(torch.load(models))
+    elif models == "kalman":
+        print("Using Kalman Filter model...")
     else:
         print("Training new model...")
         model = Load_model.load_model(model_name, n_in, n_out, n_hid)
@@ -231,6 +238,7 @@ if __name__ == "__main__":
 
     # Find all training sequences in the data folder
     base_folder = Path("data/Processed")
+    # base_folder = Path("maritime_domain_awareness/data/Processed")
 
     for ship_folder in base_folder.iterdir():
         if not ship_folder.is_dir():
@@ -286,16 +294,31 @@ if __name__ == "__main__":
         val_loader   = DataLoader(val_dataset,   batch_size=32, shuffle=False)
         test_loader  = DataLoader(test_dataset,  batch_size=32, shuffle=False)
         
-
-        train_loss, val_loss = train(
-            model,
-            train_loader,
-            val_loader,
-            num_epochs=epochs,
-            learning_rate=lr,
-            device = device
-        )
-
+        if models == "kalman":
+            model = KalmanFilterWrapper(dt=1.0, process_variance=1e-5, measurement_variance=0.1, init_error=1.0)
+            train_loss = []
+            val_loss = []
+            # Validation loss for Kalman Filter
+            model.eval()
+            with torch.no_grad():
+                val_err = 0.0
+                for x_batch, y_batch in val_loader:
+                    outputs = model(x_batch)
+                    error = nn.MSELoss()(outputs, y_batch)
+                    val_err += error.item()
+                avg_val_loss = val_err / len(val_loader)
+                val_loss.append(avg_val_loss)
+        else:
+            train_loss, val_loss = train(
+                model,
+                train_loader,
+                val_loader,
+                num_epochs=epochs,
+                learning_rate=lr,
+            )
+        predictedPoint = []
+        actualPoint = []
+        
         # Predict the test set vs true values
         model.to(device)
         model.eval()
@@ -313,9 +336,17 @@ if __name__ == "__main__":
                     inputs = inputs.transpose(0, 1)
                     targets = targets.transpose(0, 1)
                 outputs = model(inputs)
-                # Compare outputs with targets
+                # Ensure both outputs and targets are [batch_size, seq_len, n_out]
+                if outputs.dim() == 2:
+                    outputs = outputs.unsqueeze(0)
+                if targets.dim() == 2:
+                    targets = targets.unsqueeze(0)
+                predictedPoint.append(outputs)
+                actualPoint.append(targets)
                 error = nn.MSELoss()(outputs, targets)
                 err += error.item()
+        predictedPoint = torch.cat(predictedPoint, dim=0)
+        actualPoint = torch.cat(actualPoint, dim=0)
         avg_err = err / len(test_loader)
 
         train_loss_total.extend(train_loss)
@@ -325,6 +356,7 @@ if __name__ == "__main__":
             break
         i += 1
     # Save model
+    PlotToWorldMap(actualPoint = actualPoint, predictedPoint = predictedPoint)
     torch.save(model.state_dict(), models)
     plot = True
     if plot == True:
