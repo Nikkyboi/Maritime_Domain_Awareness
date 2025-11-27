@@ -69,7 +69,41 @@ def invert_normalization(
             df[col] = df[col] * std + mean
     return df
 
- 
+def save_normalization_stats(
+    stats: Dict[str, Tuple[float, float]],
+    path: Path,
+) -> None:
+    """
+    Save normalization stats to CSV: columns = [column, mean, std].
+
+    Overwrites the file if it already exists.
+    """
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    rows = [
+        {"column": col, "mean": mean, "std": std}
+        for col, (mean, std) in stats.items()
+    ]
+    df_stats = pd.DataFrame(rows)
+    df_stats.to_csv(path, index=False)
+
+
+def load_normalization_stats(path: Path) -> Dict[str, Tuple[float, float]]:
+    """
+    Load normalization stats from a CSV written by `save_normalization_stats`.
+    Returns a dict: {column: (mean, std)}.
+    """
+    path = Path(path)
+    df_stats = pd.read_csv(path)
+
+    stats: Dict[str, Tuple[float, float]] = {}
+    for _, row in df_stats.iterrows():
+        col = str(row["column"])
+        mean = float(row["mean"])
+        std = float(row["std"])
+        stats[col] = (mean, std)
+    return stats
 
 # ECEF unit-vector helpers
 # ----------------------------------------------------------------------
@@ -231,6 +265,10 @@ def preprocess(file_path: Path = "data/Raw/aisdk-2025-03-01.csv", out_path: Path
     norm_stats = compute_normalization_stats(df, norm_cols)
     # If you want to reuse these stats elsewhere (e.g. eval), persist `norm_stats`.
     df = apply_normalization(df, norm_stats)
+
+    # save normalization stats in data directory
+    norm_stats_path = out_path / "../normalization_stats.csv"
+    save_normalization_stats(norm_stats, norm_stats_path)
 
     # # ----- filter for ships at port -----
     def make_port_boundaries(data_path: Path = "data/Raw/port_locodes.csv"):
