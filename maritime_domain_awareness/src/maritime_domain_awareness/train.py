@@ -1,14 +1,15 @@
 #from maritime_domain_awareness.model import Model
 #from maritime_domain_awareness.data import MyDataset
 import matplotlib.pyplot as plt
+from .evaluate import evaluate_model, compute_global_norm_stats, rollout_full_sequence
 from pathlib import Path
 import pandas as pd
 import torch
-from torch.utils.data import TensorDataset, DataLoader, Dataset
+from torch.utils.data import DataLoader, Dataset
 from torch import nn
-from models import Load_model
+from .models import Load_model
 # from PlotToWorldMap import PlotToWorldMap
-from KalmanFilterWrapper import KalmanFilterWrapper
+from .KalmanFilterWrapper import KalmanFilterWrapper
 
 class AISTrajectorySeq2Seq(Dataset):
     """
@@ -34,20 +35,24 @@ class AISTrajectorySeq2Seq(Dataset):
         self.seq_len = seq_len
 
         # we need i+1+seq_len <= N  ->  i <= N - seq_len - 1
-        self.N = X.shape[0] - seq_len - 1
+        self.N = X.shape[0] - seq_len + 1
 
     def __len__(self) -> int:
-        return self.N
+        return max(self.N, 0)
 
     def __getitem__(self, idx: int):
         x_seq = self.X[idx : idx + self.seq_len]          # [T, n_in]
-        y_seq = self.y[idx + 1 : idx + 1 + self.seq_len]  # [T, n_out]
+        y_seq = self.y[idx : idx + self.seq_len]          # [T, 2] deltas
         return x_seq, y_seq
 
 def load_and_split_data(
     input_file: str | Path,
     train_frac: float = 0.7,
     val_frac: float = 0.15,
+    in_mean = None,
+    in_std = None,
+    delta_mean = None,
+    delta_std = None,
 ):
     """
     Load and split the dataset into train, validation, and test sets.
@@ -62,29 +67,54 @@ def load_and_split_data(
         raise ValueError(f"Unsupported file format: {input_file.suffix}")
     
 
-    # Select input + output columns
-    in_cols  = ["X", "Y", "Z", "SOG", "COG", "Heading", "DeltaT"]
-    # in_cols  = ["Latitude", "Longitude"]
-    out_cols = ["X", "Y", "Z"]
-
-    # Basic sanity check
-    for c in in_cols + out_cols:
-        if c not in df.columns:
-            raise KeyError(f"Column {c!r} not found in {input_file}. Got: {list(df.columns)}")
-
-    X = df[in_cols].to_numpy(dtype="float32")   # [N, 5]
-    y = df[out_cols].to_numpy(dtype="float32")  # [N, 2]
+    # ---- Select input + output columns ----
+    in_cols  = ["Latitude", "Longitude", "SOG", "COG"]
+    #out_cols = ["Latitude", "Longitude"]
+    out_cols = ["dLatitude", "dLongitude"] # predict deltas of lat, lon
+    
+    # ----- Split into train, val, test -----
+    # Compute deltas on raw df
+    df["dLatitude"]  = df["Latitude"].diff().fillna(0.0)
+    df["dLongitude"] = df["Longitude"].diff().fillna(0.0)
 
     N = len(df)
     train_end = int(train_frac * N)
     val_end   = int((train_frac + val_frac) * N)
 
-    # chronological splits (no shuffling)
-    X_train, y_train = X[:train_end],      y[:train_end]
-    X_val,   y_val   = X[train_end:val_end], y[train_end:val_end]
-    X_test,  y_test  = X[val_end:],        y[val_end:]
+    # ----- normalization -----
+    if in_mean is None or in_std is None or delta_mean is None or delta_std is None:
+        raise ValueError("in_mean, in_std, delta_mean, delta_std must be provided for normalization.")
 
-    print(f"N={N} -> train={len(X_train)}, val={len(X_val)}, test={len(X_test)}")
+    # Inputs
+    mean_in = pd.Series(in_mean, index=in_cols)
+    std_in  = pd.Series(in_std,  index=in_cols)
+
+    # Deltas
+    mean_delta = pd.Series(delta_mean, index=out_cols)
+    std_delta  = pd.Series(delta_std,  index=out_cols)
+
+    df_X = (df[in_cols]    - mean_in)   / std_in
+    df_y = (df[out_cols]   - mean_delta) / std_delta
+
+    # chronological splits (no shuffling)
+    df_train_X = df_X.iloc[:train_end]
+    df_val_X   = df_X.iloc[train_end:val_end]
+    df_test_X  = df_X.iloc[val_end:]
+
+    df_train_y = df_y.iloc[:train_end]
+    df_val_y   = df_y.iloc[train_end:val_end]
+    df_test_y  = df_y.iloc[val_end:]
+
+    print(f"N={N} -> train={len(df_train_X)}, val={len(df_val_X)}, test={len(df_test_X)}")
+
+    X_train = df_train_X.to_numpy(dtype="float32")
+    y_train = df_train_y.to_numpy(dtype="float32")
+
+    X_val   = df_val_X.to_numpy(dtype="float32")
+    y_val   = df_val_y.to_numpy(dtype="float32")
+
+    X_test  = df_test_X.to_numpy(dtype="float32")
+    y_test  = df_test_y.to_numpy(dtype="float32")
 
     # Convert to torch tensors
     X_train_t = torch.from_numpy(X_train)
@@ -100,7 +130,8 @@ def train(model : nn.Module,
         train_loader: DataLoader, 
         val_loader: DataLoader, 
         num_epochs: int = 10,
-        learning_rate: float = 1e-3, 
+        learning_rate: float = 1e-3,
+        dynamic_epochs: bool = False,
         device: str | torch.device | None = None,):
     
     # Set device (Use GPU if available)
@@ -116,8 +147,20 @@ def train(model : nn.Module,
 
     # Track loss
     training_loss, validation_loss = [], []
+    
+    if dynamic_epochs:
+        epochs = 100  # big upper bound, early stopping will cut it
+        patience = 5        # how many epochs to wait for improvement
+        min_delta = 1e-8    # minimum change to count as improvement
+    else:
+        epochs = num_epochs
+        patience = None
+        min_delta = None
+        
+    best_val_loss = float("inf")
+    epochs_no_improve = 0
 
-    for epoch in range(num_epochs):
+    for epoch in range(epochs):
         # Training
         model.train()
         train_loss = 0.0
@@ -170,9 +213,22 @@ def train(model : nn.Module,
 
         avg_val_loss = val_loss / max(val_batches, 1)
         validation_loss.append(avg_val_loss)
-        print(f"Epoch {epoch+1}/{num_epochs}, Train Loss: {avg_train_loss:.8f}, Val Loss: {avg_val_loss:.8f}")
+        
+        print(f"Epoch {epoch+1}, Train Loss: {avg_train_loss:.8f}, Val Loss: {avg_val_loss:.8f}")
+        
+        # ----- Early stopping -----
+        if dynamic_epochs:
+            if avg_val_loss + min_delta < best_val_loss:
+                # significant improvement
+                best_val_loss = avg_val_loss
+                epochs_no_improve = 0
+            else:
+                epochs_no_improve += 1
+                if epochs_no_improve >= patience:
+                    print(f"Early stopping at epoch {epoch+1} due to validation loss plateau.")
+                    break
 
-    return training_loss, validation_loss, 
+    return training_loss, validation_loss
 
 if __name__ == "__main__":
     """
@@ -196,15 +252,16 @@ if __name__ == "__main__":
     
     carophy
     """
+    # ----------------------------
+    # Set device (Use GPU if available)
     device = None
-
     if device is None:
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    # --------------------------
     
+    # --------------------------
     # Choose the name of the model to train
-    # Options: "rnn", "lstm", "gru", "transformer", "kalman" & "mamba"
-    model_name = "transformer"
+    # Options: "rnn", "lstm", "gru", "transformer", "kalman"
+    model_name = "Transformer"
 
     # Look for the existing model
     if model_name == "kalman":
@@ -213,12 +270,12 @@ if __name__ == "__main__":
         models = "models/ais_" + model_name + "_model.pth"
     
     # Inputs, Hidden, Outputs
-    n_in = 7    # lat, lon
+    n_in = 4    # lat, lon
     n_hid = 64  # hidden size
-    n_out = 3   # lat, lon
+    n_out = 2   # lat, lon
     
     # Epochs and learning rate
-    epochs = 5
+    epochs = 20
     lr = 1e-3
     
     # -------------------------
@@ -232,14 +289,12 @@ if __name__ == "__main__":
         print("Training new model...")
         model = Load_model.load_model(model_name, n_in, n_out, n_hid)
 
-
-
+    # ----------------------------
+    # Find all training sequences
+    
     training_sequences = []
-
     # Find all training sequences in the data folder
-    base_folder = Path("data/Processed")
-    # base_folder = Path("maritime_domain_awareness/data/Processed")
-
+    base_folder = Path("data/Processed/")
     for ship_folder in base_folder.iterdir():
         if not ship_folder.is_dir():
             continue
@@ -250,13 +305,30 @@ if __name__ == "__main__":
                 training_sequences.append(parquet_file)
 
     print("Found training sequences:", len(training_sequences))
-
+    
+    global_in_mean, global_in_std, global_delta_mean, global_delta_std = compute_global_norm_stats(
+        base_folder,
+        train_frac=0.7,
+        IN_COLS = ["Latitude", "Longitude", "SOG", "COG"],
+        DELTA_COLS = ["dLatitude", "dLongitude"],
+    )
+    print("Global input mean:", global_in_mean)
+    print("Global input std:",  global_in_std)
+    print("Global delta mean:", global_delta_mean)
+    print("Global delta std:",  global_delta_std)
+    # ----------------------------
+    # Training loop over all sequences
     train_loss_total = []
     val_loss_total = []
     avg_test_loss = []
     i = 0
+    
+    tests_to_run = []
+    
+    # ----------------------------
+    # Training sequence loop
+    # For each training sequence file, train the model
     for seq in training_sequences:
-        
         print("Training on sequence:", seq)
         # Load data
         input_file = seq
@@ -265,7 +337,13 @@ if __name__ == "__main__":
         # Input = latitude, longitude, sog, cog, heading
         # Output = latitude, longitude
         # split 70/15/15
-        (train_X, train_y), (val_X, val_y), (test_X, test_y) = load_and_split_data(input_file)
+        (train_X, train_y), (val_X, val_y), (test_X, test_y) = load_and_split_data(
+            input_file,
+            in_mean=global_in_mean,
+            in_std=global_in_std,
+            delta_mean=global_delta_mean,
+            delta_std=global_delta_std,
+        )
         print("X_train.shape:", train_X.shape)
         print("y_train.shape:", train_y.shape)
 
@@ -279,10 +357,10 @@ if __name__ == "__main__":
             continue
         
         if len(val_X) <= seq_len + 1:
-             # If validation is too small, we can either skip validation or skip the whole file.
-             # Usually better to skip the file to avoid errors in val_loader
-             print(f"Skipping sequence {seq}: Val set too small ({len(val_X)} <= {seq_len + 1})")
-             continue
+            # If validation is too small, we can either skip validation or skip the whole file.
+            # Usually better to skip the file to avoid errors in val_loader
+            print(f"Skipping sequence {seq}: Val set too small ({len(val_X)} <= {seq_len + 1})")
+            continue
 
         # Create datasets and dataloaders
         train_dataset = AISTrajectorySeq2Seq(train_X, train_y, seq_len)
@@ -293,6 +371,9 @@ if __name__ == "__main__":
         train_loader = DataLoader(train_dataset, batch_size=32, shuffle=True)
         val_loader   = DataLoader(val_dataset,   batch_size=32, shuffle=False)
         test_loader  = DataLoader(test_dataset,  batch_size=32, shuffle=False)
+
+        # Save test loaders for later evaluation
+        tests_to_run.append((seq, test_loader))
         
         if models == "kalman":
             model = KalmanFilterWrapper(dt=1.0, process_variance=1e-5, measurement_variance=0.1, init_error=1.0)
@@ -315,65 +396,25 @@ if __name__ == "__main__":
                 val_loader,
                 num_epochs=epochs,
                 learning_rate=lr,
+                dynamic_epochs = True
             )
-        predictedPoint = []
-        actualPoint = []
+
+            # Show under or overfitting
+            train_loss_total.extend(train_loss)
+            val_loss_total.extend(val_loss)
         
-        # Predict the test set vs true values
-        model.to(device)
-        model.eval()
-        err = 0.0
-        with torch.no_grad():
-            for batch in test_loader:
-                inputs, targets = batch
-                # Move tensors to the same device as the model
-                inputs = inputs.to(device)
-                targets = targets.to(device)
-
-                # Keep the original targets in batch-first form for metrics/append
-                # DataLoader yields [B, T, F] already, so keep raw_targets that way.
-                raw_targets = targets
-
-                # If the model expects time-first (T, B, F), transpose inputs for model.
-                if getattr(model, 'batch_first', False) is False:
-                    inputs_for_model = inputs.transpose(0, 1)
-                else:
-                    inputs_for_model = inputs
-
-                outputs = model(inputs_for_model)
-
-                # Normalize outputs to batch-first shape [B, T, F]
-                if outputs.dim() == 3:
-                    # model likely returned [T, B, F] when batch_first is False
-                    if getattr(model, 'batch_first', False) is False:
-                        outputs = outputs.transpose(0, 1)  # -> [B, T, F]
-                elif outputs.dim() == 2:
-                    # single-timestep output [B, F] -> add time dim
-                    outputs = outputs.unsqueeze(1)  # [B, 1, F]
-
-                # Ensure raw_targets also has a time-dimension: [B, T, F]
-                if raw_targets.dim() == 2:
-                    raw_targets = raw_targets.unsqueeze(1)
-
-                # Now outputs and raw_targets should both be [B, T, F]
-                predictedPoint.append(outputs)
-                actualPoint.append(raw_targets)
-
-                error = nn.MSELoss()(outputs, raw_targets)
-                err += error.item()
-        predictedPoint = torch.cat(predictedPoint, dim=0)
-        actualPoint = torch.cat(actualPoint, dim=0)
-        avg_err = err / len(test_loader)
-
-        train_loss_total.extend(train_loss)
-        val_loss_total.extend(val_loss)
-        avg_test_loss.append(avg_err)
-        if i == 20:
-            break
-        i += 1
+            # Break after first iteration for testing
+            #if i == 10:
+            #    break
+            #i += 1
+    
+    # ----------------------------
     # Save model
-    # PlotToWorldMap(actualPoint = actualPoint, predictedPoint = predictedPoint)
     torch.save(model.state_dict(), models)
+    
+    # ----------------------------
+    # Plot training and validation loss
+    # This shows under or overfitting
     plot = True
     if plot == True:
         # Show training and validation loss
@@ -385,13 +426,38 @@ if __name__ == "__main__":
         plt.title("reports/Training and Validation Loss")
         #plt.savefig("reports/training_validation_loss_temp.png")
         plt.show()
+            
+    # ----------------------------
+    # Evaluate on all test sets
+    evaluate_model(
+        model,
+        tests_to_run,
+        device,
+        in_mean=global_in_mean,
+        in_std=global_in_std,
+        delta_mean=global_delta_mean,
+        delta_std=global_delta_std,
+    )
 
-        # Show test loss
-        plt.figure()
-        plt.plot(avg_test_loss, label="Test Loss")
-        plt.xlabel("Sequence")
-        plt.ylabel("Loss")
-        plt.legend()
-        plt.title("reports/Test Loss")
-        #plt.savefig("reports/test_loss_temp.png")
-        plt.show()
+    
+    # ----------------------------
+    
+    # reload that file's data (same function you already use)
+    for example_seq, _ in tests_to_run:
+        (train_X, train_y), (val_X, val_y), (test_X, test_y) = load_and_split_data(
+            example_seq,
+            in_mean=global_in_mean,
+            in_std=global_in_std,
+            delta_mean=global_delta_mean,
+            delta_std=global_delta_std,
+        )
+        rollout_full_sequence(
+            model,
+            test_X,
+            in_mean=global_in_mean,
+            in_std=global_in_std,
+            delta_mean=global_delta_mean,
+            delta_std=global_delta_std,
+            device=device,
+            seq_len=50,   # or whatever seq_len you trained with
+        )

@@ -43,9 +43,9 @@ def load_model(model_path: str, n_in : int, n_out : int, n_hid : int = 64) -> ob
             n_in=n_in,
             n_hid=n_hid,
             n_out=n_out,
-            num_layers=2,
+            num_layers=4,
             batch_first=False,
-            dropout=0.1,
+            dropout=0.2,
         )
         
     elif "gru" in model_path:
@@ -63,9 +63,9 @@ def load_model(model_path: str, n_in : int, n_out : int, n_hid : int = 64) -> ob
         n_in=n_in,
         n_hid=n_hid,
         n_out=n_out,
-        num_layers=2,
-        n_heads=4,
-        dim_feedforward=128,
+        num_layers=3,
+        n_heads= 4,
+        dim_feedforward=2 * n_hid,
         dropout=0.1,
         batch_first=False,
         )
