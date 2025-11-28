@@ -4,10 +4,12 @@ import matplotlib.pyplot as plt
 from pathlib import Path
 import pandas as pd
 import torch
+import json
+import numpy as np
 from torch.utils.data import TensorDataset, DataLoader, Dataset
 from torch import nn
 from models import Load_model
-# from PlotToWorldMap import PlotToWorldMap
+from PlotToWorldMap import PlotToWorldMap
 from KalmanFilterWrapper import KalmanFilterWrapper
 
 class AISTrajectorySeq2Seq(Dataset):
@@ -62,11 +64,15 @@ def load_and_split_data(
         raise ValueError(f"Unsupported file format: {input_file.suffix}")
     
 
-    # Select input + output columns
-    in_cols  = ["X", "Y", "Z", "SOG", "COG", "Heading", "DeltaT"]
-    # in_cols  = ["Latitude", "Longitude"]
-    out_cols = ["X", "Y", "Z"]
+    # Select input + output columns (Normalized)
+    # Input: Lat, Lon, Speed, Course (sin/cos), Time (sin/cos)
+    in_cols  = [
+        "Lat_norm", "Lon_norm", "SOG_norm", "COG_sin", "COG_cos", "Time_sin", "Time_cos",
+        "Lat_norm_lag_1", "Lon_norm_lag_1", "SOG_norm_lag_1", "COG_sin_lag_1", "COG_cos_lag_1",
+        "Lat_norm_lag_2", "Lon_norm_lag_2", "SOG_norm_lag_2", "COG_sin_lag_2", "COG_cos_lag_2"
+    ]
 
+    out_cols = ["Lat_norm", "Lon_norm"]
     # Basic sanity check
     for c in in_cols + out_cols:
         if c not in df.columns:
@@ -96,10 +102,27 @@ def load_and_split_data(
 
     return (X_train_t, y_train_t), (X_val_t, y_val_t), (X_test_t, y_test_t)
 
+def denormalize(tensor, params):
+   
+    lat_min = params["lat_min"]
+    lat_max = params["lat_max"]
+    lon_min = params["lon_min"]
+    lon_max = params["lon_max"]
+    
+    lat_range = lat_max - lat_min
+    lon_range = lon_max - lon_min
+    
+    denorm = tensor.clone()
+    
+    denorm[..., 0] = denorm[..., 0] * lat_range + lat_min
+    denorm[..., 1] = denorm[..., 1] * lon_range + lon_min
+    
+    return denorm
+
 def train(model : nn.Module, 
         train_loader: DataLoader, 
         val_loader: DataLoader, 
-        num_epochs: int = 10,
+        num_epochs: int = 20,
         learning_rate: float = 1e-3, 
         device: str | torch.device | None = None,):
     
@@ -111,7 +134,6 @@ def train(model : nn.Module,
     
     # Loss function and optimizer
     criterion = torch.nn.MSELoss() # Mean Squared Error
-    #criterion = torch.nn.CrossEntropyLoss()
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
 
     # Track loss
@@ -213,12 +235,12 @@ if __name__ == "__main__":
         models = "models/ais_" + model_name + "_model.pth"
     
     # Inputs, Hidden, Outputs
-    n_in = 7    # lat, lon
-    n_hid = 64  # hidden size
-    n_out = 3   # lat, lon
+    n_in = 17    # lat, lon
+    n_hid = 128  # hidden size
+    n_out = 2   # lat, lon
     
     # Epochs and learning rate
-    epochs = 5
+    epochs = 20
     lr = 1e-3
     
     # -------------------------
@@ -237,8 +259,18 @@ if __name__ == "__main__":
     training_sequences = []
 
     # Find all training sequences in the data folder
-    base_folder = Path("data/Processed")
-    # base_folder = Path("maritime_domain_awareness/data/Processed")
+    # Adjust this path to where your preprocessed data actually lives
+    base_folder = Path("./done44")
+    
+    # Load Normalization Parameters
+    norm_params_path = base_folder / "normalization_params.json"
+    norm_params = None
+    if norm_params_path.exists():
+        with open(norm_params_path, "r") as f:
+            norm_params = json.load(f)
+        print("Loaded normalization params:", norm_params)
+    else:
+        print("Warning: normalization_params.json not found. Plotting will be in normalized coordinates.")
 
     for ship_folder in base_folder.iterdir():
         if not ship_folder.is_dir():
@@ -254,7 +286,8 @@ if __name__ == "__main__":
     train_loss_total = []
     val_loss_total = []
     avg_test_loss = []
-    i = 0
+
+    i = len(training_sequences)
     for seq in training_sequences:
         
         print("Training on sequence:", seq)
@@ -283,7 +316,9 @@ if __name__ == "__main__":
              # Usually better to skip the file to avoid errors in val_loader
              print(f"Skipping sequence {seq}: Val set too small ({len(val_X)} <= {seq_len + 1})")
              continue
-
+        if len(test_X) <= seq_len + 1:
+             print(f"Skipping sequence {seq}: Test set too small ({len(test_X)} <= {seq_len + 1})")
+             continue
         # Create datasets and dataloaders
         train_dataset = AISTrajectorySeq2Seq(train_X, train_y, seq_len)
         val_dataset   = AISTrajectorySeq2Seq(val_X,   val_y,   seq_len)
@@ -361,22 +396,52 @@ if __name__ == "__main__":
 
                 error = nn.MSELoss()(outputs, raw_targets)
                 err += error.item()
+
         predictedPoint = torch.cat(predictedPoint, dim=0)
         actualPoint = torch.cat(actualPoint, dim=0)
+        if i<10 or i<400:
+            if predictedPoint.dim() == 3:
+                predictedPoint = predictedPoint.reshape(-1, predictedPoint.shape[-1])
+            if actualPoint.dim() == 3:
+                actualPoint = actualPoint.reshape(-1, actualPoint.shape[-1])
+            
+            train_len = len(train_y)
+            val_len = len(val_y)
+            test_len = len(actualPoint)
+            
+            full_ground_truth = torch.cat((train_y.cpu(), val_y.cpu(), actualPoint.cpu()), dim=0)
+            
+            padding = torch.full((train_len + val_len, 2), float('nan'))
+            full_predicted = torch.cat((padding, predictedPoint.cpu()), dim=0)
+            
+            if norm_params:
+                denorm_ground_truth = denormalize(full_ground_truth, norm_params)
+                denorm_predicted = denormalize(full_predicted, norm_params)
+            else:
+                denorm_ground_truth = full_ground_truth
+                denorm_predicted = full_predicted
+
+            print(f"Plotting sequence {seq.name}...")
+            PlotToWorldMap(actualPoint=denorm_ground_truth, predictedPoint=denorm_predicted)
+            plt.show()
+
+
         avg_err = err / len(test_loader)
 
         train_loss_total.extend(train_loss)
         val_loss_total.extend(val_loss)
         avg_test_loss.append(avg_err)
-        if i == 20:
+        
+        i -= 1
+        if i <390:
             break
-        i += 1
     # Save model
     # PlotToWorldMap(actualPoint = actualPoint, predictedPoint = predictedPoint)
     torch.save(model.state_dict(), models)
     plot = True
     if plot == True:
-        # Show training and validation loss
+        # 1. Plot Loss Curves
+        plt.figure(figsize=(10, 5))
         plt.plot(train_loss_total, label="Train Loss")
         plt.plot(val_loss_total, label="Validation Loss")
         plt.xlabel("Epoch")

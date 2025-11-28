@@ -153,8 +153,8 @@ class myTransformer(nn.Module):
 
 if __name__ == "__main__":
     # Testing the myLSTM model
-    n_in = 5    # lat, lon, sog, cog, heading
-    n_hid = 64   # hidden size
+    n_in = 17    # lat, lon, sog, cog, heading
+    n_hid = 128   # hidden size
     n_out = 2   # lat, lon
     
     # test model
@@ -162,9 +162,9 @@ if __name__ == "__main__":
     n_in=n_in,
     n_hid=n_hid,
     n_out=n_out,
-    num_layers=2,
-    n_heads=4,
-    dim_feedforward=128,
+    num_layers=4,
+    n_heads=8,
+    dim_feedforward=512,
     dropout=0.1,
     batch_first=False,
     )

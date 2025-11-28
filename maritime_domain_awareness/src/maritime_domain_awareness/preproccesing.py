@@ -5,6 +5,7 @@ import numpy as np
 from pathlib import Path
 import os
 import glob
+import json
 
 def interpolate(group, freq="1min"):
     #vi sætter index til timestamp i stedet for 0,1,2...
@@ -22,7 +23,15 @@ def interpolate(group, freq="1min"):
     resampled[cols_to_interp] = resampled[cols_to_interp].interpolate(method="linear", limit_direction='both')
     resampled["COG"] = np.rad2deg(np.arctan2(resampled["COG_sin"], resampled["COG_cos"]))
     resampled["COG"] = (resampled["COG"] + 360) % 360
-    resampled = resampled.drop(columns=["COG_sin", "COG_cos"])
+    
+    seconds_in_day = 24 * 60 * 60
+    seconds_since_midnight = resampled.index.hour * 3600 + resampled.index.minute * 60 + resampled.index.second
+    
+    resampled["Time_sin"] = np.sin(2 * np.pi * seconds_since_midnight / seconds_in_day)
+    resampled["Time_cos"] = np.cos(2 * np.pi * seconds_since_midnight / seconds_in_day)
+    
+    resampled["Step"] = range(len(resampled))
+
     resampled["MMSI"] = group["MMSI"].iloc[0]
     resampled["Segment"] = group["Segment"].iloc[0]
     return resampled.dropna().reset_index()
@@ -81,11 +90,15 @@ def filter_raw_data(df):
     df["Ship type"] = df["Ship type"].fillna("Unknown").astype(str).str.lower()
     df["Navigational status"] = df["Navigational status"].fillna("Unknown").astype(str).str.lower()
 
-    is_fishing = (
-    df["Ship type"].str.contains("fishing") |
-    df["Navigational status"].str.contains("fishing")
+    is_fishing_row = (
+        df["Ship type"].str.contains("fishing") |
+        df["Navigational status"].str.contains("fishing")
     )
-    df = df[is_fishing]
+
+    fishing_mmsis = df.loc[is_fishing_row, "MMSI"].unique()
+
+    df = df[df["MMSI"].isin(fishing_mmsis)]
+    
     return df
 
 
@@ -120,6 +133,49 @@ def remove_long_stationary_periods(df, max_duration_hours=4, speed_threshold=1.0
     print(f"Removed {len(df) - len(df_filtered)} rows (stationary periods).")
     return df_filtered
 
+
+def normalize_data(df, out_path):
+    
+    # ligesom peder sagde tror jeg
+    #sog min er 0
+    norm_params = {
+        "lat_min": float(df["Latitude"].min()),
+        "lat_max": float(df["Latitude"].max()),
+        "lon_min": float(df["Longitude"].min()),
+        "lon_max": float(df["Longitude"].max()),
+        "sog_max": float(df["SOG"].max()),
+    }
+    
+    print(f"Normalization Params: {norm_params}")
+    
+    # Save params
+    os.makedirs(out_path, exist_ok=True)
+    params_path = os.path.join(out_path, "normalization_params.json")
+    with open(params_path, "w") as f:
+        json.dump(norm_params, f, indent=4)
+    
+    lat_range = norm_params["lat_max"] - norm_params["lat_min"]
+    lon_range = norm_params["lon_max"] - norm_params["lon_min"]
+
+    df["Lat_norm"] = (df["Latitude"] - norm_params["lat_min"]) / lat_range
+    df["Lon_norm"] = (df["Longitude"] - norm_params["lon_min"]) / lon_range
+    
+    
+    df["SOG_norm"] = df["SOG"] / norm_params["sog_max"]
+    
+    return df
+
+
+def lag_features(df, lag_steps=1):
+    df[f"Lat_norm_lag_{lag_steps}"] = df.groupby(["MMSI", "Segment"])["Lat_norm"].shift(lag_steps)
+    df[f"Lon_norm_lag_{lag_steps}"] = df.groupby(["MMSI", "Segment"])["Lon_norm"].shift(lag_steps)
+    df[f"SOG_norm_lag_{lag_steps}"] = df.groupby(["MMSI", "Segment"])["SOG_norm"].shift(lag_steps)
+    df[f"COG_sin_lag_{lag_steps}"] = df.groupby(["MMSI", "Segment"])["COG_sin"].shift(lag_steps)
+    df[f"COG_cos_lag_{lag_steps}"] = df.groupby(["MMSI", "Segment"])["COG_cos"].shift(lag_steps)
+
+    df = df.dropna()
+    
+    return df
 
 def preprocess(input_path, out_path, raw_out_path=None, test_limit=None, max_days=None):
     dtypes = {
@@ -181,7 +237,8 @@ def preprocess(input_path, out_path, raw_out_path=None, test_limit=None, max_day
     df = df.sort_values(['MMSI', 'Timestamp'])
 
     df = remove_long_stationary_periods(df, max_duration_hours=4, speed_threshold=1.0)
-
+    
+    
     # Divide track into segments based on timegap
     df['Segment'] = df.groupby('MMSI')['Timestamp'].transform(
     lambda x: (x.diff().dt.total_seconds().fillna(0) >= 15 * 60).cumsum()) # Max allowed timegap
@@ -216,7 +273,10 @@ def preprocess(input_path, out_path, raw_out_path=None, test_limit=None, max_day
     df["SOG"] = knots_to_ms * df["SOG"]
 
     df_processed = df.groupby(["MMSI", "Segment"]).apply(interpolate).reset_index(drop=True)
-
+    
+    df_processed = normalize_data(df_processed, out_path)
+    df_processed= lag_features(df_processed, lag_steps=1)
+    df_processed= lag_features(df_processed, lag_steps=2)
     table = pyarrow.Table.from_pandas(df_processed, preserve_index=False)
     pyarrow.parquet.write_to_dataset(
     table,
@@ -251,6 +311,7 @@ def preprocess(input_path, out_path, raw_out_path=None, test_limit=None, max_day
 if __name__ == "__main__":
     preprocess(
         "../../data/Raw/data", 
-        "../../data/preprocessed/done4.parquet",
-        "../../data/preprocessed/raw_segmented.parquet",
+        "../../data/preprocessed/done4",
+        "../../data/preprocessed/raw_segmented",
+        max_days=7
 )
