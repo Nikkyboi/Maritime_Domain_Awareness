@@ -29,7 +29,7 @@ def load_model(model_path: str, n_in : int, n_out : int, n_hid : int = 64) -> ob
     model_path = model_path.lower()
 
     if "rnn" in model_path:
-        model = RNN_models.myLSTM(
+        model = RNN_models.myRecurrent(
             n_in=n_in,
             n_hid=n_hid,
             n_out=n_out,
