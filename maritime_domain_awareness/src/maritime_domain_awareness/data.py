@@ -1,322 +1,225 @@
+import torch
+from torch.utils.data import Dataset
+import numpy as np
+import pandas as pd
+import pyarrow.parquet as pq
 from pathlib import Path
 
-import typer
-from torch.utils.data import Dataset
-import pandas
-import pyarrow
-import pyarrow.parquet
-from sklearn.cluster import KMeans
-import pandas as pd
-import numpy as np
-import torch
-from typing import Dict, Iterable, Tuple
-
-from shapely.geometry import Point
-from shapely.geometry.polygon import Polygon
-
-
-# ----------------------------------------------------------------------
-# Normalization helpers
-# ----------------------------------------------------------------------
-def compute_normalization_stats(
-    df: pd.DataFrame,
-    columns: Iterable[str],
-) -> Dict[str, Tuple[float, float]]:
+class AISTrajectorySeq2Seq(Dataset):
     """
-    Compute mean/std for each column in `columns`.
-
-    For degenerate columns (std == 0 or non-finite), std is set to 1.0 so that
-    normalization is well-defined. The *effective* std used is what gets stored.
-    """
-    stats: Dict[str, Tuple[float, float]] = {}
-    for col in columns:
-        mean = df[col].mean()
-        std = df[col].std()
-
-        if std == 0 or not np.isfinite(std):
-            std = 1.0
-
-        stats[col] = (float(mean), float(std))
-    return stats
-
-
-def apply_normalization(
-    df: pd.DataFrame,
-    stats: Dict[str, Tuple[float, float]],
-) -> pd.DataFrame:
-    """
-    Normalize columns in-place using pre-computed stats {col: (mean, std)}.
-
-    x_norm = (x - mean) / std
-    """
-    for col, (mean, std) in stats.items():
-        if col in df.columns:
-            df[col] = (df[col] - mean) / std
-    return df
-
-
-def invert_normalization(
-    df: pd.DataFrame,
-    stats: Dict[str, Tuple[float, float]],
-) -> pd.DataFrame:
-    """
-    Invert normalization in-place using stats {col: (mean, std)}.
-
-    x = x_norm * std + mean
-    """
-    for col, (mean, std) in stats.items():
-        if col in df.columns:
-            df[col] = df[col] * std + mean
-    return df
-
-def save_normalization_stats(
-    stats: Dict[str, Tuple[float, float]],
-    path: Path,
-) -> None:
-    """
-    Save normalization stats to CSV: columns = [column, mean, std].
-
-    Overwrites the file if it already exists.
-    """
-    path = Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-
-    rows = [
-        {"column": col, "mean": mean, "std": std}
-        for col, (mean, std) in stats.items()
-    ]
-    df_stats = pd.DataFrame(rows)
-    df_stats.to_csv(path, index=False)
-
-
-def load_normalization_stats(path: Path) -> Dict[str, Tuple[float, float]]:
-    """
-    Load normalization stats from a CSV written by `save_normalization_stats`.
-    Returns a dict: {column: (mean, std)}.
-    """
-    path = Path(path)
-    df_stats = pd.read_csv(path)
-
-    stats: Dict[str, Tuple[float, float]] = {}
-    for _, row in df_stats.iterrows():
-        col = str(row["column"])
-        mean = float(row["mean"])
-        std = float(row["std"])
-        stats[col] = (mean, std)
-    return stats
-
-# ECEF unit-vector helpers
-# ----------------------------------------------------------------------
-def latlon_to_ecef_unit(
-    lat_deg: np.ndarray | pd.Series,
-    lon_deg: np.ndarray | pd.Series,
-) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """
-    Convert latitude/longitude in degrees to ECEF unit vectors (X, Y, Z).
-
-    Assumes a unit sphere Earth and ignores height.
-    """
-    lat_rad = np.deg2rad(lat_deg)
-    lon_rad = np.deg2rad(lon_deg)
-
-    cos_lat = np.cos(lat_rad)
-    x = cos_lat * np.cos(lon_rad)
-    y = cos_lat * np.sin(lon_rad)
-    z = np.sin(lat_rad)
-
-    return x, y, z
-
-
-def ecef_unit_to_latlon(
-    x: np.ndarray | pd.Series,
-    y: np.ndarray | pd.Series,
-    z: np.ndarray | pd.Series,
-) -> Tuple[np.ndarray, np.ndarray]:
-    """
-    Convert ECEF unit vectors (X, Y, Z) back to latitude/longitude in degrees.
-    """
-    x_arr = np.asarray(x)
-    y_arr = np.asarray(y)
-    z_arr = np.asarray(z)
-
-    hyp = np.sqrt(x_arr**2 + y_arr**2)
-    lat_rad = np.arctan2(z_arr, hyp)
-    lon_rad = np.arctan2(y_arr, x_arr)
-
-    lat_deg = np.rad2deg(lat_rad)
-    lon_deg = np.rad2deg(lon_rad)
-
-    return lat_deg, lon_deg
-
-
-
-
-def preprocess(file_path: Path = "data/Raw/aisdk-2025-03-01.csv", out_path: Path = "data/Processed/") -> None:
-    # ----- read -----
-
-    # Get the project root (maritime_domain_awareness folder)
-    project_root = Path(__file__).resolve().parents[3]
+    Dataset for AIS trajectory sequence-to-sequence modeling.
+    Many to many model.
     
-    if file_path is None:
-        file_path = project_root / "maritime_domain_awareness" / "data" / "Raw" / "aisdk-2025-03-01.csv"
+    It simply stores the full dataset in memory as tensors X and y,
+    then returns sequences of length seq_len for each index.
+    """
+    def __init__(self, X: torch.Tensor, y: torch.Tensor, seq_len: int):
+        """
+        X: [N, n_in]
+        y: [N, n_out]
+        seq_len: number of timesteps per input sequence
+
+        For each i, returns:
+          x_seq: X[i : i+seq_len]         -> [seq_len, n_in]
+          y_seq: y[i+1 : i+1+seq_len]     -> [seq_len, n_out]
+        """
+        assert X.shape[0] == y.shape[0], "X and y must have same length"
+        self.X = X
+        self.y = y
+        self.seq_len = seq_len
+
+        # we need i+1+seq_len <= N  ->  i <= N - seq_len - 1
+        self.N = X.shape[0] - seq_len + 1
+
+    def __len__(self) -> int:
+        return max(self.N, 0)
+
+    def __getitem__(self, idx: int):
+        x_seq = self.X[idx : idx + self.seq_len]          # [T, n_in]
+        y_seq = self.y[idx : idx + self.seq_len]          # [T, 2] deltas
+        return x_seq, y_seq
     
-    if out_path is None:
-        out_path = project_root / "maritime_domain_awareness" / "data" / "Processed"
-
-    dtypes = {
-        "MMSI": "object",
-        "SOG": float,
-        "COG": float,
-        "Longitude": float,
-        "Latitude": float,
-        "Heading": float,
-        "# Timestamp": "object",
-        "Type of mobile": "object",
-        # fishing-related columns for filtering
-        "Navigational status": "object",
-        "Ship type": "object",
-    }
-    usecols = list(dtypes.keys())
-    # read only columns that exist in the file
-    df = pandas.read_csv(file_path, usecols=usecols, dtype=dtypes)
     
-    # ---- base geographic and quality filters ----
-    bbox = [60, 0, 50, 20]
-    north, west, south, east = bbox
-    df = df[
-        (df["Latitude"] <= north) & (df["Latitude"] >= south) &
-        (df["Longitude"] >= west) & (df["Longitude"] <= east)
-    ]
+def load_and_split_data(
+    input_file: str | Path,
+    train_frac: float = 0.7,
+    val_frac: float = 0.15,
+    in_mean = None,
+    in_std = None,
+    delta_mean = None,
+    delta_std = None,
+):
+    """
+    Load and split the dataset into train, validation, and test sets.
+    """
+    input_file = Path(input_file)
+    
+    if input_file.suffix == ".csv":
+        df = pd.read_csv(input_file)
+    elif input_file.suffix == ".parquet":
+        df = pd.read_parquet(input_file)
+    else:
+        raise ValueError(f"Unsupported file format: {input_file.suffix}")
+    
 
-    # keep only AIS Class A/B
-    df = df[df["Type of mobile"].isin(["Class A", "Class B"])]
-    df = df.drop(columns=["Type of mobile"])
+    # ---- Select input + output columns ----
+    in_cols  = ["Latitude", "Longitude", "SOG", "COG"]
+    #out_cols = ["Latitude", "Longitude"]
+    out_cols = ["dLatitude", "dLongitude"] # predict deltas of lat, lon
+    
+    # ----- Split into train, val, test -----
+    # Compute deltas on raw df
+    df["dLatitude"]  = df["Latitude"].diff().fillna(0.0)
+    df["dLongitude"] = df["Longitude"].diff().fillna(0.0)
 
-    # MMSI sanity + Danish MMSIs (219*, 220*)
-    df = df[df["MMSI"].astype(str).str.len() == 9]
-    df = df[df["MMSI"].astype(str).str.isnumeric()]
-    df = df[df["MMSI"].astype(str).str.startswith(("219", "220"))]
+    N = len(df)
+    train_end = int(train_frac * N)
+    val_end   = int((train_frac + val_frac) * N)
 
-    # TODO: 
-    # Consider whether simply dropping observations where any feature has a null value is the right move.
-    # Alternatively, could simply drop the features that frequently has null values, or estimate values instead of null.
+    # ----- normalization -----
+    if in_mean is None or in_std is None or delta_mean is None or delta_std is None:
+        raise ValueError("in_mean, in_std, delta_mean, delta_std must be provided for normalization.")
 
-    # ----- fishing vessel filters -----
-    # Normalize helper
-    def _norm_str_col(s):
-        return s.fillna("").astype(str).str.strip().str.lower()
+    # Inputs
+    mean_in = pd.Series(in_mean, index=in_cols)
+    std_in  = pd.Series(in_std,  index=in_cols)
 
-    fishing_mask_row = pandas.Series(False, index=df.index)
+    # Deltas
+    mean_delta = pd.Series(delta_mean, index=out_cols)
+    std_delta  = pd.Series(delta_std,  index=out_cols)
 
-    nav_norm = _norm_str_col(df["Navigational status"])
-    fishing_mask_row |= nav_norm.str.contains("fish")
+    df_X = (df[in_cols]    - mean_in)   / std_in
+    df_y = (df[out_cols]   - mean_delta) / std_delta
 
-    type_norm = _norm_str_col(df["Ship type"])
-    fishing_mask_row |= type_norm.str.contains("fish")
+    # chronological splits (no shuffling)
+    df_train_X = df_X.iloc[:train_end]
+    df_val_X   = df_X.iloc[train_end:val_end]
+    df_test_X  = df_X.iloc[val_end:]
 
-    fishing_mmsi = df.loc[fishing_mask_row, "MMSI"].unique()
+    df_train_y = df_y.iloc[:train_end]
+    df_val_y   = df_y.iloc[train_end:val_end]
+    df_test_y  = df_y.iloc[val_end:]
 
-    df = df[df["MMSI"].isin(fishing_mmsi)]
+    print(f"N={N} -> train={len(df_train_X)}, val={len(df_val_X)}, test={len(df_test_X)}")
 
-    # ----- timestamps, filters, segmentation -----
-    df = df.rename(columns={"# Timestamp": "Timestamp"})
-    df["Timestamp"] = pandas.to_datetime(df["Timestamp"], format="%d/%m/%Y %H:%M:%S", errors="coerce")
-    df = df.dropna(subset=["Timestamp"])
-    df = df.drop_duplicates(["Timestamp", "MMSI"], keep="first")
+    X_train = df_train_X.to_numpy(dtype="float32")
+    y_train = df_train_y.to_numpy(dtype="float32")
 
-    def track_filter(g):
-        len_filt = len(g) > 256
-        # still in knots here
-        sog_filt = 1 <= g["SOG"].max() <= 50
-        time_filt = (g["Timestamp"].max() - g["Timestamp"].min()).total_seconds() >= 60 * 60
-        return len_filt and sog_filt and time_filt
+    X_val   = df_val_X.to_numpy(dtype="float32")
+    y_val   = df_val_y.to_numpy(dtype="float32")
 
-    df = df.groupby("MMSI").filter(track_filter)
-    df = df.sort_values(["MMSI", "Timestamp"])
+    X_test  = df_test_X.to_numpy(dtype="float32")
+    y_test  = df_test_y.to_numpy(dtype="float32")
 
-    # segment by ≥15 min gap
-    df["Segment"] = df.groupby("MMSI")["Timestamp"].transform(
-        lambda x: (x.diff().dt.total_seconds().fillna(0) >= 15 * 60).cumsum()
-    )
+    # Convert to torch tensors
+    X_train_t = torch.from_numpy(X_train)
+    y_train_t = torch.from_numpy(y_train)
+    X_val_t   = torch.from_numpy(X_val)
+    y_val_t   = torch.from_numpy(y_val)
+    X_test_t  = torch.from_numpy(X_test)
+    y_test_t  = torch.from_numpy(y_test)
 
-    # filter segments
-    df = df.groupby(["MMSI", "Segment"]).filter(track_filter).reset_index(drop=True)
+    return (X_train_t, y_train_t), (X_val_t, y_val_t), (X_test_t, y_test_t)
 
-    # ----- Drop observations where any feature has null value -----
-    feature_cols = ["Latitude", "Longitude", "SOG", "COG", "Heading"]
-    df = df.dropna(subset=feature_cols)
+# Global column definitions
+IN_COLS = ["Latitude", "Longitude", "SOG", "COG"]
+DELTA_COLS = ["dLatitude", "dLongitude"]
 
-    # ----- Add Δt feature (seconds between messages within each segment) -----
-    df["DeltaT"] = (
-        df.groupby(["MMSI", "Segment"])["Timestamp"]
-          .diff()
-          .dt.total_seconds()
-    )
+def compute_global_norm_stats(base_folder: Path, train_frac: float = 0.7, IN_COLS = IN_COLS, DELTA_COLS = DELTA_COLS):
+    """
+    Compute global mean/std for:
+      - IN_COLS  = [Latitude, Longitude, SOG, COG]   (inputs)
+      - DELTA_COLS = [dLatitude, dLongitude]         (targets = deltas)
+    over the TRAIN portions of all files.
+    """
+    # Inputs
+    count_in = 0
+    sum_in = np.zeros(len(IN_COLS), dtype=np.float64)
+    sum_sq_in = np.zeros(len(IN_COLS), dtype=np.float64)
 
-    # for the first message in each segment, diff() is NaN → set to 0
-    df["DeltaT"] = df["DeltaT"].fillna(0.0)
+    # Deltas
+    count_delta = 0
+    sum_delta = np.zeros(len(DELTA_COLS), dtype=np.float64)
+    sum_sq_delta = np.zeros(len(DELTA_COLS), dtype=np.float64)
 
-    # ----- units -----
-    df["SOG"] = 0.514444 * df["SOG"]  # knots → m/s
-
-
-    # ----- normalization of features -----
-    norm_cols = ["SOG", "COG", "Heading", "DeltaT"]
-    norm_stats = compute_normalization_stats(df, norm_cols)
-    # If you want to reuse these stats elsewhere (e.g. eval), persist `norm_stats`.
-    df = apply_normalization(df, norm_stats)
-
-    # save normalization stats in data directory
-    norm_stats_path = out_path / "../normalization_stats.csv"
-    save_normalization_stats(norm_stats, norm_stats_path)
-
-    # # ----- filter for ships at port -----
-    def make_port_boundaries(data_path: Path = "data/Raw/port_locodes.csv"):
-        df = pandas.read_csv(data_path,sep=";")
-        dictionary = dict()
-        for row in df.itertuples(index = False, name = None):
-                name, code, coords = row
-                if not code.startswith("DK"):
+    for ship_folder in base_folder.iterdir():
+        if not ship_folder.is_dir():
+            continue
+        for inner_folder in ship_folder.iterdir():
+            if not inner_folder.is_dir():
+                continue
+            for parquet_file in inner_folder.glob("*.parquet"):
+                df = pd.read_parquet(parquet_file)[IN_COLS].dropna()
+                N = len(df)
+                if N < 2:
                     continue
-                this_coord = []
-                for coord in coords.split(","):
-                    longitude,latitude = coord.split()
-                    this_coord.append((float(longitude),float(latitude)))
-                dictionary[code] = this_coord
-        return dictionary
 
-    def point_in_polygon(row):
-        point = Point(row["Longitude"],row["Latitude"])
-        return not polygon.contains(point)
+                train_end = int(train_frac * N)
+                df_train = df.iloc[:train_end].copy()
 
-    ports = make_port_boundaries()
+                # Compute deltas on the train part
+                df_train["dLatitude"]  = df_train["Latitude"].diff().fillna(0.0)
+                df_train["dLongitude"] = df_train["Longitude"].diff().fillna(0.0)
 
-    for port in ports:
-        polygon = Polygon(ports[port])
-        df = df[df.apply(point_in_polygon,axis=1)]
+                arr_in = df_train[IN_COLS].to_numpy(dtype=np.float64)
+                arr_delta = df_train[DELTA_COLS].to_numpy(dtype=np.float64)
 
+                # Accumulate for inputs
+                count_in += len(arr_in)
+                sum_in   += arr_in.sum(axis=0)
+                sum_sq_in += (arr_in ** 2).sum(axis=0)
 
+                # Accumulate for deltas
+                count_delta += len(arr_delta)
+                sum_delta   += arr_delta.sum(axis=0)
+                sum_sq_delta += (arr_delta ** 2).sum(axis=0)
 
-    # ---- ECEF unit vectors from lat/lon ----
-    df["X"], df["Y"], df["Z"] = latlon_to_ecef_unit(
-        df["Latitude"].values,
-        df["Longitude"].values,
+    # Inputs stats
+    mean_in = sum_in / count_in
+    var_in  = sum_sq_in / count_in - mean_in**2
+    std_in  = np.sqrt(np.maximum(var_in, 1e-12))
+
+    # Deltas stats
+    mean_delta = sum_delta / count_delta
+    var_delta  = sum_sq_delta / count_delta - mean_delta**2
+    std_delta  = np.sqrt(np.maximum(var_delta, 1e-12))
+
+    return (
+        mean_in.astype("float32"),
+        std_in.astype("float32"),
+        mean_delta.astype("float32"),
+        std_delta.astype("float32"),
     )
     
+def find_all_parquet_files(base_folder: Path):
+    """
+    Find all Parquet files in the given base folder and its subfolders.
+    """
+    training_sequences = []
+    for ship_folder in base_folder.iterdir():
+            if not ship_folder.is_dir():
+                continue
+            for inner_folder in ship_folder.iterdir():
+                if not inner_folder.is_dir():
+                    continue
+                for parquet_file in inner_folder.glob("*.parquet"):
+                    training_sequences.append(parquet_file)
     
-    # ----- Drop columns we don't want model training on ------
-    df = df.drop(columns=["Navigational status", "Ship type", "Timestamp", "Latitude", "Longitude"])
-
-    # ----- write parquet, partitioned by MMSI and Segment -----
-    table = pyarrow.Table.from_pandas(df, preserve_index=False)
-    pyarrow.parquet.write_to_dataset(
-        table,
-        root_path=out_path,
-        partition_cols=["MMSI", "Segment"],
-    )
-
-
+    return training_sequences
 
 if __name__ == "__main__":
-    print("Preprocessing data...")
-    typer.run(preprocess)
+    # Example usage
+    data_path = "data/Processed/2025-03-01/danish_219_220.parquet"
+    (X_train, y_train), (X_val, y_val), (X_test, y_test) = load_and_split_data(
+        data_path,
+        in_mean=[56.0, 10.0, 5.0, 180.0],
+        in_std=[1.0, 1.0, 2.0, 90.0],
+        delta_mean=[0.0, 0.0],
+        delta_std=[0.0001, 0.0001],
+    )
+    print("Train X shape:", X_train.shape)
+    print("Train y shape:", y_train.shape)
+    print("Val X shape:", X_val.shape)
+    print("Val y shape:", y_val.shape)
+    print("Test X shape:", X_test.shape)
+    print("Test y shape:", y_test.shape)

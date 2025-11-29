@@ -4,76 +4,7 @@ import torch.nn as nn
 import numpy as np
 import pandas as pd
 from pathlib import Path
-from torch.utils.data import DataLoader
-
-IN_COLS = ["Latitude", "Longitude", "SOG", "COG"]
-DELTA_COLS = ["dLatitude", "dLongitude"]
-
-def compute_global_norm_stats(base_folder: Path, train_frac: float = 0.7, IN_COLS = IN_COLS, DELTA_COLS = DELTA_COLS):
-    """
-    Compute global mean/std for:
-      - IN_COLS  = [Latitude, Longitude, SOG, COG]   (inputs)
-      - DELTA_COLS = [dLatitude, dLongitude]         (targets = deltas)
-    over the TRAIN portions of all files.
-    """
-    # Inputs
-    count_in = 0
-    sum_in = np.zeros(len(IN_COLS), dtype=np.float64)
-    sum_sq_in = np.zeros(len(IN_COLS), dtype=np.float64)
-
-    # Deltas
-    count_delta = 0
-    sum_delta = np.zeros(len(DELTA_COLS), dtype=np.float64)
-    sum_sq_delta = np.zeros(len(DELTA_COLS), dtype=np.float64)
-
-    for ship_folder in base_folder.iterdir():
-        if not ship_folder.is_dir():
-            continue
-        for inner_folder in ship_folder.iterdir():
-            if not inner_folder.is_dir():
-                continue
-            for parquet_file in inner_folder.glob("*.parquet"):
-                df = pd.read_parquet(parquet_file)[IN_COLS].dropna()
-                N = len(df)
-                if N < 2:
-                    continue
-
-                train_end = int(train_frac * N)
-                df_train = df.iloc[:train_end].copy()
-
-                # Compute deltas on the train part
-                df_train["dLatitude"]  = df_train["Latitude"].diff().fillna(0.0)
-                df_train["dLongitude"] = df_train["Longitude"].diff().fillna(0.0)
-
-                arr_in = df_train[IN_COLS].to_numpy(dtype=np.float64)
-                arr_delta = df_train[DELTA_COLS].to_numpy(dtype=np.float64)
-
-                # Accumulate for inputs
-                count_in += len(arr_in)
-                sum_in   += arr_in.sum(axis=0)
-                sum_sq_in += (arr_in ** 2).sum(axis=0)
-
-                # Accumulate for deltas
-                count_delta += len(arr_delta)
-                sum_delta   += arr_delta.sum(axis=0)
-                sum_sq_delta += (arr_delta ** 2).sum(axis=0)
-
-    # Inputs stats
-    mean_in = sum_in / count_in
-    var_in  = sum_sq_in / count_in - mean_in**2
-    std_in  = np.sqrt(np.maximum(var_in, 1e-12))
-
-    # Deltas stats
-    mean_delta = sum_delta / count_delta
-    var_delta  = sum_sq_delta / count_delta - mean_delta**2
-    std_delta  = np.sqrt(np.maximum(var_delta, 1e-12))
-
-    return (
-        mean_in.astype("float32"),
-        std_in.astype("float32"),
-        mean_delta.astype("float32"),
-        std_delta.astype("float32"),
-    )
+from .models import Load_model
 
 def evaluate_model_on_sequence(model, test_loader, device):
     """
@@ -324,4 +255,55 @@ def rollout_full_sequence(
     plt.show()
 
 if __name__ == "__main__":
-    evaluate_model()
+    # Parameters
+    n_in = 4      # Latitude, Longitude, SOG, COG
+    n_out = 2     # predict dLatitude, dLongitude
+    n_hid = 64    # hidden size for RNN/LSTM/GRU/Transformer
+    
+    # Sequence length for training and rollout
+    seq_len = 50
+
+    # load a model and evaluate on test data
+    model_name = "lstm"
+    model_path = "models/ais_" + model_name + "_model.pth"
+    if Path(model_path).exists():
+        print("Loading existing model:")
+        model = Load_model.load_model(model_name, n_in, n_out, n_hid)
+        model.load_state_dict(torch.load(model_path))
+        
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    else :
+        print(f"Model file not found: {model_path}")
+        
+    # Load a random test dataset and evaluate
+    test_file = "data/Processed/MMSI=219005901/Segment=0/513774f9fb5b4cabba2085564bb84c5c-0.parquet"
+    from .data import AISTrajectorySeq2Seq, load_and_split_data, compute_global_norm_stats
+    base_folder = Path("data/Processed/")
+    global_in_mean, global_in_std, global_delta_mean, global_delta_std = compute_global_norm_stats(
+            base_folder,
+            train_frac=0.7,
+            IN_COLS = ["Latitude", "Longitude", "SOG", "COG"],
+            DELTA_COLS = ["dLatitude", "dLongitude"],
+        )
+    
+    (X_train, y_train), (X_val, y_val), (X_test, y_test) = load_and_split_data(
+        test_file,
+        in_mean=global_in_mean,
+        in_std=global_in_std,
+        delta_mean=global_delta_mean,
+        delta_std=global_delta_std,
+    )
+    
+    test_dataset = AISTrajectorySeq2Seq(X_test, y_test, seq_len)
+    test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=32, shuffle=False)
+    tests_to_run = [(Path(test_file), test_loader)]
+    rollout_full_sequence(
+        model,
+        X_seq=torch.tensor(X_test, dtype=torch.float32),
+        in_mean=global_in_mean,
+        in_std=global_in_std,
+        delta_mean=global_delta_mean,
+        delta_std=global_delta_std,
+        device=device,
+        seq_len=seq_len,
+    )

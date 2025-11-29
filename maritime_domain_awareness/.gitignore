@@ -16,10 +16,14 @@ reports/*
 
 # Mac OS-specific storage files
 .DS_Store
+*/.DS_Store
 
 # data files
 data/Raw/
 data/Processed/
+
+# Ignore models
+models/*
 
 # vim
 *.swp
