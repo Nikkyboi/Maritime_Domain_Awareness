@@ -261,203 +261,208 @@ if __name__ == "__main__":
     # --------------------------
     # Choose the name of the model to train
     # Options: "rnn", "lstm", "gru", "transformer", "kalman"
-    model_name = "Transformer"
-
-    # Look for the existing model
-    if model_name == "kalman":
-        models = "kalman"
-    else:
-        models = "models/ais_" + model_name + "_model.pth"
+    #model_name = "Transformer"
+    models = ["rnn", "lstm", "gru", "transformer"]
     
-    # Inputs, Hidden, Outputs
-    n_in = 4    # lat, lon
-    n_hid = 64  # hidden size
-    n_out = 2   # lat, lon
-    
-    # Epochs and learning rate
-    epochs = 20
-    lr = 1e-3
-    
-    # -------------------------
-    if Path(models).exists():
-        print("Loading existing model:")
-        model = Load_model.load_model(model_name, n_in, n_out, n_hid)
-        model.load_state_dict(torch.load(models))
-    elif models == "kalman":
-        print("Using Kalman Filter model...")
-    else:
-        print("Training new model...")
-        model = Load_model.load_model(model_name, n_in, n_out, n_hid)
-
-    # ----------------------------
-    # Find all training sequences
-    
-    training_sequences = []
-    # Find all training sequences in the data folder
-    base_folder = Path("data/Processed/")
-    for ship_folder in base_folder.iterdir():
-        if not ship_folder.is_dir():
-            continue
-        for inner_folder in ship_folder.iterdir():
-            if not inner_folder.is_dir():
-                continue
-            for parquet_file in inner_folder.glob("*.parquet"):
-                training_sequences.append(parquet_file)
-
-    print("Found training sequences:", len(training_sequences))
-    
-    global_in_mean, global_in_std, global_delta_mean, global_delta_std = compute_global_norm_stats(
-        base_folder,
-        train_frac=0.7,
-        IN_COLS = ["Latitude", "Longitude", "SOG", "COG"],
-        DELTA_COLS = ["dLatitude", "dLongitude"],
-    )
-    print("Global input mean:", global_in_mean)
-    print("Global input std:",  global_in_std)
-    print("Global delta mean:", global_delta_mean)
-    print("Global delta std:",  global_delta_std)
-    # ----------------------------
-    # Training loop over all sequences
-    train_loss_total = []
-    val_loss_total = []
-    avg_test_loss = []
-    i = 0
-    
-    tests_to_run = []
-    
-    # ----------------------------
-    # Training sequence loop
-    # For each training sequence file, train the model
-    for seq in training_sequences:
-        print("Training on sequence:", seq)
-        # Load data
-        input_file = seq
-        
-        # split into train, test and validation sets:
-        # Input = latitude, longitude, sog, cog, heading
-        # Output = latitude, longitude
-        # split 70/15/15
-        (train_X, train_y), (val_X, val_y), (test_X, test_y) = load_and_split_data(
-            input_file,
-            in_mean=global_in_mean,
-            in_std=global_in_std,
-            delta_mean=global_delta_mean,
-            delta_std=global_delta_std,
-        )
-        print("X_train.shape:", train_X.shape)
-        print("y_train.shape:", train_y.shape)
-
-        # Choose sequence length (number of timesteps per sample)
-        seq_len = 50
-        
-        # Check if we have enough data for at least one sequence
-        # We need at least seq_len + 1 samples
-        if len(train_X) <= seq_len + 1:
-            print(f"Skipping sequence {seq}: Train set too small ({len(train_X)} <= {seq_len + 1})")
-            continue
-        
-        if len(val_X) <= seq_len + 1:
-            # If validation is too small, we can either skip validation or skip the whole file.
-            # Usually better to skip the file to avoid errors in val_loader
-            print(f"Skipping sequence {seq}: Val set too small ({len(val_X)} <= {seq_len + 1})")
-            continue
-
-        # Create datasets and dataloaders
-        train_dataset = AISTrajectorySeq2Seq(train_X, train_y, seq_len)
-        val_dataset   = AISTrajectorySeq2Seq(val_X,   val_y,   seq_len)
-        test_dataset  = AISTrajectorySeq2Seq(test_X,  test_y,  seq_len)
-
-        # Create data loaders
-        train_loader = DataLoader(train_dataset, batch_size=32, shuffle=True)
-        val_loader   = DataLoader(val_dataset,   batch_size=32, shuffle=False)
-        test_loader  = DataLoader(test_dataset,  batch_size=32, shuffle=False)
-
-        # Save test loaders for later evaluation
-        tests_to_run.append((seq, test_loader))
-        
-        if models == "kalman":
-            model = KalmanFilterWrapper(dt=1.0, process_variance=1e-5, measurement_variance=0.1, init_error=1.0)
-            train_loss = []
-            val_loss = []
-            # Validation loss for Kalman Filter
-            model.eval()
-            with torch.no_grad():
-                val_err = 0.0
-                for x_batch, y_batch in val_loader:
-                    outputs = model(x_batch)
-                    error = nn.MSELoss()(outputs, y_batch)
-                    val_err += error.item()
-                avg_val_loss = val_err / len(val_loader)
-                val_loss.append(avg_val_loss)
+    for model_name in models:
+        # Look for the existing model
+        if model_name == "kalman":
+            models = "kalman"
         else:
-            train_loss, val_loss = train(
+            models = "models/ais_" + model_name + "_model.pth"
+        
+        # Inputs, Hidden, Outputs
+        n_in = 4    # lat, lon
+        n_hid = 64  # hidden size
+        n_out = 2   # lat, lon
+        
+        # Epochs and learning rate
+        epochs = 20
+        lr = 1e-3
+        
+        # -------------------------
+        if Path(models).exists():
+            print("Loading existing model:")
+            model = Load_model.load_model(model_name, n_in, n_out, n_hid)
+            model.load_state_dict(torch.load(models))
+        elif models == "kalman":
+            print("Using Kalman Filter model...")
+        else:
+            print("Training new model...")
+            model = Load_model.load_model(model_name, n_in, n_out, n_hid)
+
+        # ----------------------------
+        # Find all training sequences
+        
+        training_sequences = []
+        # Find all training sequences in the data folder
+        base_folder = Path("data/Processed/")
+        for ship_folder in base_folder.iterdir():
+            if not ship_folder.is_dir():
+                continue
+            for inner_folder in ship_folder.iterdir():
+                if not inner_folder.is_dir():
+                    continue
+                for parquet_file in inner_folder.glob("*.parquet"):
+                    training_sequences.append(parquet_file)
+
+        print("Found training sequences:", len(training_sequences))
+        
+        global_in_mean, global_in_std, global_delta_mean, global_delta_std = compute_global_norm_stats(
+            base_folder,
+            train_frac=0.7,
+            IN_COLS = ["Latitude", "Longitude", "SOG", "COG"],
+            DELTA_COLS = ["dLatitude", "dLongitude"],
+        )
+        print("Global input mean:", global_in_mean)
+        print("Global input std:",  global_in_std)
+        print("Global delta mean:", global_delta_mean)
+        print("Global delta std:",  global_delta_std)
+        
+        # ----------------------------
+        # Training loop over all sequences
+        train_loss_total = []
+        val_loss_total = []
+        avg_test_loss = []
+        i = 0
+        
+        tests_to_run = []
+        
+        # ----------------------------
+        # Training sequence loop
+        # For each training sequence file, train the model
+        for seq in training_sequences:
+            print("Training on sequence:", seq)
+            # Load data
+            input_file = seq
+            
+            # split into train, test and validation sets:
+            # Input = latitude, longitude, sog, cog, heading
+            # Output = latitude, longitude
+            # split 70/15/15
+            (train_X, train_y), (val_X, val_y), (test_X, test_y) = load_and_split_data(
+                input_file,
+                in_mean=global_in_mean,
+                in_std=global_in_std,
+                delta_mean=global_delta_mean,
+                delta_std=global_delta_std,
+            )
+            print("X_train.shape:", train_X.shape)
+            print("y_train.shape:", train_y.shape)
+
+            # Choose sequence length (number of timesteps per sample)
+            seq_len = 50
+            
+            # Check if we have enough data for at least one sequence
+            # We need at least seq_len + 1 samples
+            if len(train_X) <= seq_len + 1:
+                print(f"Skipping sequence {seq}: Train set too small ({len(train_X)} <= {seq_len + 1})")
+                continue
+            
+            if len(val_X) <= seq_len + 1:
+                # If validation is too small, we can either skip validation or skip the whole file.
+                # Usually better to skip the file to avoid errors in val_loader
+                print(f"Skipping sequence {seq}: Val set too small ({len(val_X)} <= {seq_len + 1})")
+                continue
+
+            # Create datasets and dataloaders
+            train_dataset = AISTrajectorySeq2Seq(train_X, train_y, seq_len)
+            val_dataset   = AISTrajectorySeq2Seq(val_X,   val_y,   seq_len)
+            test_dataset  = AISTrajectorySeq2Seq(test_X,  test_y,  seq_len)
+
+            # Create data loaders
+            train_loader = DataLoader(train_dataset, batch_size=32, shuffle=True)
+            val_loader   = DataLoader(val_dataset,   batch_size=32, shuffle=False)
+            test_loader  = DataLoader(test_dataset,  batch_size=32, shuffle=False)
+
+            # Save test loaders for later evaluation
+            tests_to_run.append((seq, test_loader))
+            
+            if models == "kalman":
+                model = KalmanFilterWrapper(dt=1.0, process_variance=1e-5, measurement_variance=0.1, init_error=1.0)
+                train_loss = []
+                val_loss = []
+                # Validation loss for Kalman Filter
+                model.eval()
+                with torch.no_grad():
+                    val_err = 0.0
+                    for x_batch, y_batch in val_loader:
+                        outputs = model(x_batch)
+                        error = nn.MSELoss()(outputs, y_batch)
+                        val_err += error.item()
+                    avg_val_loss = val_err / len(val_loader)
+                    val_loss.append(avg_val_loss)
+            else:
+                train_loss, val_loss = train(
+                    model,
+                    train_loader,
+                    val_loader,
+                    num_epochs=epochs,
+                    learning_rate=lr,
+                    dynamic_epochs = True
+                )
+
+                # Show under or overfitting
+                train_loss_total.extend(train_loss)
+                val_loss_total.extend(val_loss)
+            
+                # Break after first iteration for testing
+                #if i == 10:
+                #    break
+                #i += 1
+        
+        # ----------------------------
+        # Save model
+        torch.save(model.state_dict(), models)
+        
+        # Show plots?
+        plot = False
+        
+        # ----------------------------
+        # Plot training and validation loss
+        # This shows under or overfitting
+        if plot == True:
+            # Show training and validation loss
+            plt.plot(train_loss_total, label="Train Loss")
+            plt.plot(val_loss_total, label="Validation Loss")
+            plt.xlabel("Epoch")
+            plt.ylabel("Loss")
+            plt.legend()
+            plt.title("reports/Training and Validation Loss")
+            #plt.savefig("reports/training_validation_loss_temp.png")
+            plt.show()
+                
+            # ----------------------------
+            # Evaluate on all test sets
+            evaluate_model(
                 model,
-                train_loader,
-                val_loader,
-                num_epochs=epochs,
-                learning_rate=lr,
-                dynamic_epochs = True
+                tests_to_run,
+                device,
+                in_mean=global_in_mean,
+                in_std=global_in_std,
+                delta_mean=global_delta_mean,
+                delta_std=global_delta_std,
             )
 
-            # Show under or overfitting
-            train_loss_total.extend(train_loss)
-            val_loss_total.extend(val_loss)
-        
-            # Break after first iteration for testing
-            #if i == 10:
-            #    break
-            #i += 1
-    
-    # ----------------------------
-    # Save model
-    torch.save(model.state_dict(), models)
-    
-    # ----------------------------
-    # Plot training and validation loss
-    # This shows under or overfitting
-    plot = True
-    if plot == True:
-        # Show training and validation loss
-        plt.plot(train_loss_total, label="Train Loss")
-        plt.plot(val_loss_total, label="Validation Loss")
-        plt.xlabel("Epoch")
-        plt.ylabel("Loss")
-        plt.legend()
-        plt.title("reports/Training and Validation Loss")
-        #plt.savefig("reports/training_validation_loss_temp.png")
-        plt.show()
             
-    # ----------------------------
-    # Evaluate on all test sets
-    evaluate_model(
-        model,
-        tests_to_run,
-        device,
-        in_mean=global_in_mean,
-        in_std=global_in_std,
-        delta_mean=global_delta_mean,
-        delta_std=global_delta_std,
-    )
-
-    
-    # ----------------------------
-    
-    # reload that file's data (same function you already use)
-    for example_seq, _ in tests_to_run:
-        (train_X, train_y), (val_X, val_y), (test_X, test_y) = load_and_split_data(
-            example_seq,
-            in_mean=global_in_mean,
-            in_std=global_in_std,
-            delta_mean=global_delta_mean,
-            delta_std=global_delta_std,
-        )
-        rollout_full_sequence(
-            model,
-            test_X,
-            in_mean=global_in_mean,
-            in_std=global_in_std,
-            delta_mean=global_delta_mean,
-            delta_std=global_delta_std,
-            device=device,
-            seq_len=50,   # or whatever seq_len you trained with
-        )
+            # ----------------------------
+            
+            # reload that file's data (same function you already use)
+            for example_seq, _ in tests_to_run:
+                (train_X, train_y), (val_X, val_y), (test_X, test_y) = load_and_split_data(
+                    example_seq,
+                    in_mean=global_in_mean,
+                    in_std=global_in_std,
+                    delta_mean=global_delta_mean,
+                    delta_std=global_delta_std,
+                )
+                rollout_full_sequence(
+                    model,
+                    test_X,
+                    in_mean=global_in_mean,
+                    in_std=global_in_std,
+                    delta_mean=global_delta_mean,
+                    delta_std=global_delta_std,
+                    device=device,
+                    seq_len=50,   # or whatever seq_len you trained with
+                )
