@@ -65,113 +65,30 @@ def evaluate_model_on_sequence(model, test_loader, device):
 
     return predicted, actual, avg_loss
 
-
-def evaluate_model(
-    model,
-    tests_to_run,
-    device,
-    in_mean=None,
-    in_std=None,
-    delta_mean=None,
-    delta_std=None,):
+def evaluate_model(model : nn.Module, tests_to_run : list, device : torch.device) -> None:
     """
     Evaluate the model on multiple test datasets.
 
     tests_to_run: list of (seq_path, test_loader) tuples
     """
-    
-    # Input stats for Lat/Lon (first two entries of in_mean/std)
-    latlon_mean = np.asarray(in_mean[:2], dtype=np.float32)
-    latlon_std  = np.asarray(in_std[:2],  dtype=np.float32)
-
-    # Delta stats for [dLatitude, dLongitude]
-    delta_mean = np.asarray(delta_mean, dtype=np.float32)
-    delta_std  = np.asarray(delta_std,  dtype=np.float32)
-    
     all_test_losses = []
 
     for seq, test_loader in tests_to_run:
         print(f"Evaluating on test set for sequence: {seq}")
-        predictedPoint, actualPoint, avg_loss = evaluate_model_on_sequence(model, test_loader, device)
+        _, _, avg_loss = evaluate_model_on_sequence(model, test_loader, device)
         all_test_losses.append(avg_loss)
-        print(f"  -> Test MSE: {avg_loss:.6f}")
 
-        # ------------------------
-        # Plot actual vs predicted for THIS boat
-        # ------------------------
-        # Shape: [B_total, T, n_out] where n_out = 2 (Latitude, Longitude)
-        pred_np = predictedPoint.detach().cpu().numpy()  # [B, T, 2]
-        act_np  = actualPoint.detach().cpu().numpy()
+    plt.figure()
+    plt.plot(all_test_losses, marker="o")
+    plt.xlabel("Boat sequence index")
+    plt.ylabel("Average Test MSE")
+    plt.title("Test loss per boat sequence")
+    plt.tight_layout()
+    plt.show()
 
-        # Denormalize
-        pred_denorm = pred_np * latlon_std + latlon_mean   # [B, T, 2]
-        act_denorm  = act_np  * latlon_std + latlon_mean   # [B, T, 2]
+    global_avg = sum(all_test_losses) / len(all_test_losses)
+    print(f"Global average test loss over {len(all_test_losses)} sequences: {global_avg:.6f}")
 
-        # Split into lat/lon, keep batch + time dimensions
-        pred_lat = pred_denorm[..., 0]   # [B, T]
-        pred_lon = pred_denorm[..., 1]
-        true_lat = act_denorm[..., 0]
-        true_lon = act_denorm[..., 1]
-
-        B, T = pred_lat.shape
-        plot = False
-        if plot:
-            fig, axes = plt.subplots(2, 1, figsize=(6, 8), sharex=True, sharey=True)
-
-            for b in range(B):
-                # plot actual segment b
-                if b == 0:
-                    axes[0].plot(true_lon[b], true_lat[b], linewidth=1, alpha=0.6, label="Actual")
-                else:
-                    axes[0].plot(true_lon[b], true_lat[b], linewidth=1, alpha=0.6)
-
-                # mark start (circle) and end (cross) for actual
-                axes[0].scatter(true_lon[b, 0],   true_lat[b, 0],   marker="o", s=20, color="green",
-                                label="Actual start" if b == 0 else None)
-                axes[0].scatter(true_lon[b, -1],  true_lat[b, -1],  marker="x", s=20, color="red",
-                                label="Actual end" if b == 0 else None)
-
-                # plot predicted segment b
-                if b == 0:
-                    axes[1].plot(pred_lon[b], pred_lat[b], linewidth=1, alpha=0.6, label="Predicted")
-                else:
-                    axes[1].plot(pred_lon[b], pred_lat[b], linewidth=1, alpha=0.6)
-
-                # mark start (circle) and end (cross) for predicted
-                axes[1].scatter(pred_lon[b, 0],   pred_lat[b, 0],   marker="o", s=20, color="green",
-                                label="Pred start" if b == 0 else None)
-                axes[1].scatter(pred_lon[b, -1],  pred_lat[b, -1],  marker="x", s=20, color="red",
-                                label="Pred end" if b == 0 else None)
-
-            axes[0].set_ylabel("Latitude")
-            axes[0].set_title(f"Boat sequence: {seq.parent.name}/{seq.name} - Actual")
-            axes[0].grid(True, alpha=0.3)
-            axes[0].legend()
-
-            axes[1].set_xlabel("Longitude")
-            axes[1].set_ylabel("Latitude")
-            axes[1].set_title(f"Boat sequence: {seq.parent.name}/{seq.name} - Predicted")
-            axes[1].grid(True, alpha=0.3)
-            axes[1].legend()
-
-            plt.tight_layout()
-            plt.show()
-        
-        
-    # ----------------------------
-    # Plot test loss per sequence + global average
-    # ----------------------------
-    if all_test_losses:
-        plt.figure()
-        plt.plot(all_test_losses, marker="o")
-        plt.xlabel("Boat sequence index")
-        plt.ylabel("Average Test MSE")
-        plt.title("Test loss per boat sequence")
-        plt.tight_layout()
-        plt.show()
-
-        global_avg = sum(all_test_losses) / len(all_test_losses)
-        print(f"Global average test loss over {len(all_test_losses)} sequences: {global_avg:.6f}")
 
 def rollout_full_sequence(
     model,
@@ -184,11 +101,17 @@ def rollout_full_sequence(
     seq_len: int = 50,
 ):
     """
-    Use the model to roll forward along one full AIS sequence.
+    Perform an autoregressive rollout over a full AIS sequence.
 
-    At each time t >= seq_len, use the last `seq_len` points to predict
-    the delta for the NEXT point. Then reconstruct one continuous
-    predicted trajectory and plot it against the actual.
+    It simply:
+    - starts from the first seq_len positions
+    for seq = 50 it has x[0..49]
+    
+    - based on the x[0..49] it predicts delta lat/lon at time 50
+    - it adds the predicted delta to the last known position x[49] to get position at time 50
+    - it appends the new position to the context window, removes the oldest position
+      so now the context window is x[1..50]
+    - it repeats this up until x[49] thuss x[50 .. 99] are pure predictions
     """
     model.to(device)
     model.eval()
@@ -204,10 +127,12 @@ def rollout_full_sequence(
     true_lat = X_np[:, 0] * latlon_std[0] + latlon_mean[0]
     true_lon = X_np[:, 1] * latlon_std[1] + latlon_mean[1]
 
-    # delta stats
+    # Delta stats for denormalization
     delta_mean = np.asarray(delta_mean, dtype=np.float32)   # [2]
     delta_std  = np.asarray(delta_std,  dtype=np.float32)   # [2]
 
+    # ----- autoregressive rollout -----
+    # store predicted deltas here
     preds = []
 
     with torch.no_grad():
@@ -222,7 +147,7 @@ def rollout_full_sequence(
             preds.append(delta_t.cpu().numpy())
 
     preds = np.stack(preds, axis=0)                # [N - seq_len, 2]
-    pred_delta = preds * delta_std + delta_mean    # denormalize deltas
+    pred_delta = preds * delta_std + delta_mean    # denormalize deltas (back to lat/lon space)
 
     # ----- reconstruct predicted positions -----
     # start from the true position at time seq_len-1

@@ -1,16 +1,25 @@
-#from maritime_domain_awareness.model import Model
-#from maritime_domain_awareness.data import MyDataset
-import matplotlib.pyplot as plt
-from .data import load_and_split_data, AISTrajectorySeq2Seq, compute_global_norm_stats, find_all_parquet_files
-from .evaluate import evaluate_model, rollout_full_sequence
+# Standard library imports
 from pathlib import Path
+import random
+
+# Third-party imports
+import matplotlib.pyplot as plt
 import pandas as pd
 import torch
-from torch.utils.data import DataLoader, Dataset
 from torch import nn
+from torch.utils.data import DataLoader, Dataset
+
+# Local project imports
+from .data import (
+    load_and_split_data,
+    AISTrajectorySeq2Seq,
+    compute_global_norm_stats,
+    find_all_parquet_files,
+)
+from .evaluate import evaluate_model, rollout_full_sequence
 from .models import Load_model
-# from PlotToWorldMap import PlotToWorldMap
 from .KalmanFilterWrapper import KalmanFilterWrapper
+#from PlotToWorldMap import PlotToWorldMap
 
 def train(model : nn.Module, 
         train_loader: DataLoader, 
@@ -287,11 +296,6 @@ if __name__ == "__main__":
                 # Show under or overfitting
                 train_loss_total.extend(train_loss)
                 val_loss_total.extend(val_loss)
-            
-                # Break after first iteration for testing
-                #if i == 10:
-                #    break
-                #i += 1
         
         # ----------------------------
         # Save model
@@ -316,21 +320,14 @@ if __name__ == "__main__":
                 
             # ----------------------------
             # Evaluate on all test sets
-            evaluate_model(
-                model,
-                tests_to_run,
-                device,
-                in_mean=global_in_mean,
-                in_std=global_in_std,
-                delta_mean=global_delta_mean,
-                delta_std=global_delta_std,
-            )
+            evaluate_model(model, tests_to_run, device)
 
             
             # ----------------------------
             
-            # reload that file's data (same function you already use)
-            for example_seq, _ in tests_to_run:
+            # pick 5 random test sequences and do full rollout
+            random_runs = random.sample(tests_to_run, min(5, len(tests_to_run)))
+            for example_seq, _ in random_runs:
                 (train_X, train_y), (val_X, val_y), (test_X, test_y) = load_and_split_data(
                     example_seq,
                     in_mean=global_in_mean,
