@@ -8,7 +8,7 @@ from pathlib import Path
 class AISTrajectorySeq2Seq(Dataset):
     """
     Dataset for AIS trajectory sequence-to-sequence modeling.
-    Many to many model.
+    Many to one model.
     
     It simply stores the full dataset in memory as tensors X and y,
     then returns sequences of length seq_len for each index.
@@ -29,14 +29,14 @@ class AISTrajectorySeq2Seq(Dataset):
         self.seq_len = seq_len
 
         # we need i+1+seq_len <= N  ->  i <= N - seq_len - 1
-        self.N = X.shape[0] - seq_len + 1
+        self.N = X.shape[0] - seq_len - 1
 
     def __len__(self) -> int:
         return max(self.N, 0)
 
     def __getitem__(self, idx: int):
         x_seq = self.X[idx : idx + self.seq_len]          # [T, n_in]
-        y_seq = self.y[idx : idx + self.seq_len]          # [T, 2] deltas
+        y_seq = self.y[idx + 1 : idx + 1 + self.seq_len]          # [T, 4] deltas
         return x_seq, y_seq
     
     
@@ -65,13 +65,23 @@ def load_and_split_data(
     # ---- Select input + output columns ----
     in_cols  = ["Latitude", "Longitude", "SOG", "COG"]
     #out_cols = ["Latitude", "Longitude"]
-    out_cols = ["dLatitude", "dLongitude"] # predict deltas of lat, lon
+    #out_cols = ["dLatitude", "dLongitude"] # predict deltas of lat, lon
     
     # ----- Split into train, val, test -----
     # Compute deltas on raw df
     df["dLatitude"]  = df["Latitude"].diff().fillna(0.0)
     df["dLongitude"] = df["Longitude"].diff().fillna(0.0)
+    df["dSOG"]       = df["SOG"].diff().fillna(0.0)
+    
+    def circular_diff_deg(a_next, a_prev):
+        # returns shortest signed angle difference in (-180, 180]
+        diff = (a_next - a_prev + 180) % 360 - 180
+        return diff
 
+    df["dCOG"] = circular_diff_deg(df["COG"], df["COG"].shift(1)).fillna(0.0)
+
+    out_cols = ["dLatitude", "dLongitude", "dSOG", "dCOG"] # predict deltas of lat, lon, SOG, COG
+    
     N = len(df)
     train_end = int(train_frac * N)
     val_end   = int((train_frac + val_frac) * N)
@@ -123,9 +133,10 @@ def load_and_split_data(
 
 # Global column definitions
 IN_COLS = ["Latitude", "Longitude", "SOG", "COG"]
-DELTA_COLS = ["dLatitude", "dLongitude"]
+#DELTA_COLS = ["dLatitude", "dLongitude"]
+DELTA_COLS = ["dLatitude", "dLongitude", "dSOG", "dCOG"]
 
-def compute_global_norm_stats(base_folder: Path, train_frac: float = 0.7, IN_COLS = IN_COLS, DELTA_COLS = DELTA_COLS):
+def compute_global_norm_stats(base_folder: Path = Path("data/Processed/"), train_frac: float = 0.7, IN_COLS = IN_COLS, DELTA_COLS = DELTA_COLS):
     """
     Compute global mean/std for:
       - IN_COLS  = [Latitude, Longitude, SOG, COG]   (inputs)
@@ -160,8 +171,17 @@ def compute_global_norm_stats(base_folder: Path, train_frac: float = 0.7, IN_COL
                 # Compute deltas on the train part
                 df_train["dLatitude"]  = df_train["Latitude"].diff().fillna(0.0)
                 df_train["dLongitude"] = df_train["Longitude"].diff().fillna(0.0)
+                df_train["dSOG"]       = df_train["SOG"].diff().fillna(0.0)
 
-                arr_in = df_train[IN_COLS].to_numpy(dtype=np.float64)
+                def circular_diff_deg(a_next, a_prev):
+                    diff = (a_next - a_prev + 180) % 360 - 180
+                    return diff
+
+                df_train["dCOG"] = circular_diff_deg(
+                    df_train["COG"], df_train["COG"].shift(1)
+                ).fillna(0.0)
+
+                arr_in    = df_train[IN_COLS].to_numpy(dtype=np.float64)
                 arr_delta = df_train[DELTA_COLS].to_numpy(dtype=np.float64)
 
                 # Accumulate for inputs

@@ -1,13 +1,14 @@
 # Standard library imports
 from pathlib import Path
 import random
+import copy
 
 # Third-party imports
 import matplotlib.pyplot as plt
 import pandas as pd
 import torch
 from torch import nn
-from torch.utils.data import DataLoader, Dataset
+from torch.utils.data import DataLoader
 
 # Local project imports
 from .data import (
@@ -16,19 +17,20 @@ from .data import (
     compute_global_norm_stats,
     find_all_parquet_files,
 )
-from .evaluate import evaluate_model, trajectory_prediction
+from .evaluate import evaluate_model
 from .models import Load_model
 from .KalmanFilterWrapper import KalmanFilterWrapper
 #from PlotToWorldMap import PlotToWorldMap
 
-def train(model : nn.Module, 
-        train_loader: DataLoader, 
-        val_loader: DataLoader, 
-        num_epochs: int = 10,
-        learning_rate: float = 1e-3,
-        dynamic_epochs: bool = False,
-        device: str | torch.device | None = None,):
-    
+def train(
+    model: nn.Module, 
+    train_loader: DataLoader, 
+    val_loader: DataLoader, 
+    num_epochs: int = 10,
+    learning_rate: float = 1e-3,
+    dynamic_epochs: bool = False,
+    device: str | torch.device | None = None,
+):
     # Set device (Use GPU if available)
     if device is None:
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -36,47 +38,65 @@ def train(model : nn.Module,
     model.to(device)
     
     # Loss function and optimizer
-    # Prediction for regression tasks
-    criterion = torch.nn.MSELoss() # Mean Squared Error
+    #criterion = nn.MSELoss()
+    criterion = nn.SmoothL1Loss()
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
 
     # Track loss
     training_loss, validation_loss = [], []
     
+    # Early stopping config
+    max_epochs = num_epochs
     if dynamic_epochs:
-        epochs = 100  # big upper bound, early stopping will cut it
-        patience = 5        # how many epochs to wait for improvement
-        min_delta = 1e-8    # minimum change to count as improvement
+        patience = 10        # epochs with no significant improvement
+        min_delta = 1e-2     # improvement threshold (in loss units)
     else:
-        epochs = num_epochs
         patience = None
         min_delta = None
-        
+    
     best_val_loss = float("inf")
+    best_state_dict = None
     epochs_no_improve = 0
 
-    for epoch in range(epochs):
+    for epoch in range(max_epochs):
+        # ----------------------
         # Training
+        # ----------------------
         model.train()
         train_loss = 0.0
         train_batches = 0
         
         for x_batch, y_batch in train_loader:
-            # [B, T, Features]
             x_batch = x_batch.to(device)
             y_batch = y_batch.to(device)
             
-            # Batch first then transpose
-            if getattr(model, 'batch_first', False) is False:
-                x_batch = x_batch.transpose(0, 1)  # [T, B, Features]
-                y_batch = y_batch.transpose(0, 1)  # [T, B, Features]
+            # Batch first then transpose if needed
+            batch_first = getattr(model, "batch_first", False)
+            if not batch_first:
+                x_batch = x_batch.transpose(0, 1)  # [T, B, F]
+                y_batch = y_batch.transpose(0, 1)  # [T, B, F]
 
             preds = model(x_batch)
+            #loss = criterion(preds, y_batch)
             
-            loss = criterion(preds, y_batch)
-            
+            if batch_first:
+                # [B, T, F] -> [B, F]
+                preds_last = preds[:, -1, :]
+                y_last     = y_batch[:, -1, :]
+            else:
+                # [T, B, F] -> [B, F]
+                preds_last = preds[-1]   # preds[-1, :, :]
+                y_last     = y_batch[-1] # y_batch[-1, :, :]
+
+            loss = criterion(preds_last, y_last)
+
             optimizer.zero_grad()
             loss.backward()
+            # ----------------------
+            # Gradient clipping (?) to prevent exploding gradients
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+            # ----------------------
+            
             optimizer.step()
 
             train_loss += loss.item()
@@ -85,7 +105,9 @@ def train(model : nn.Module,
         avg_train_loss = train_loss / max(train_batches, 1)
         training_loss.append(avg_train_loss)
         
+        # ----------------------
         # Validation
+        # ----------------------
         model.eval()
         val_loss = 0.0
         val_batches = 0
@@ -95,12 +117,22 @@ def train(model : nn.Module,
                 x_batch = x_batch.to(device)
                 y_batch = y_batch.to(device)
                 
-                # Batch first then transpose
-                if getattr(model, 'batch_first', False) is False:
-                    x_batch = x_batch.transpose(0, 1)  # [T, B, Features]
-                    y_batch = y_batch.transpose(0, 1)  # [T, B, Features]
+                batch_first = getattr(model, "batch_first", False)
+
+                if not batch_first:
+                    x_batch = x_batch.transpose(0, 1)
+                    y_batch = y_batch.transpose(0, 1)
 
                 preds = model(x_batch)
+                
+                if batch_first:
+                    preds_last = preds[:, -1, :]
+                    y_last     = y_batch[:, -1, :]
+                else:
+                    preds_last = preds[-1]
+                    y_last     = y_batch[-1]
+
+                
                 loss = criterion(preds, y_batch)
                 
                 val_loss += loss.item()
@@ -109,19 +141,33 @@ def train(model : nn.Module,
         avg_val_loss = val_loss / max(val_batches, 1)
         validation_loss.append(avg_val_loss)
         
-        print(f"Epoch {epoch+1}, Train Loss: {avg_train_loss:.8f}, Val Loss: {avg_val_loss:.8f}")
+        print(
+            f"Epoch {epoch+1}/{max_epochs}, "
+            f"Train Loss: {avg_train_loss:.8f}, "
+            f"Val Loss: {avg_val_loss:.8f}"
+        )
         
-        # ----- Early stopping -----
+        # ----------------------
+        # Early stopping logic
+        # ----------------------
         if dynamic_epochs:
-            if avg_val_loss + min_delta < best_val_loss:
-                # significant improvement
+            if avg_val_loss < best_val_loss - min_delta:
+                # Significant improvement
                 best_val_loss = avg_val_loss
+                best_state_dict = copy.deepcopy(model.state_dict())
                 epochs_no_improve = 0
             else:
                 epochs_no_improve += 1
                 if epochs_no_improve >= patience:
-                    print(f"Early stopping at epoch {epoch+1} due to validation loss plateau.")
+                    print(
+                        f"Early stopping at epoch {epoch+1} "
+                        f"(no val improvement for {patience} epochs)."
+                    )
                     break
+
+    # Restore best model if early stopping was used
+    if dynamic_epochs and best_state_dict is not None:
+        model.load_state_dict(best_state_dict)
 
     return training_loss, validation_loss
 
@@ -157,9 +203,8 @@ if __name__ == "__main__":
     # Choose the name of the model to train
     # Options: "rnn", "lstm", "gru", "transformer", "kalman"
     #model_name = "Transformer"
-    #models = ["rnn", "lstm", "gru", "transformer"]
-    models = ["rnn", "gru", "transformer"]
-    #models = ["lstm"]
+    models = ["rnn", "lstm", "gru", "transformer"]
+    #models = ["transformer"]
     
     for model_name in models:
         # Look for the existing model
@@ -170,13 +215,13 @@ if __name__ == "__main__":
         
         # Inputs, Hidden, Outputs
         n_in = 4    # lat, lon
-        n_hid = 64  # hidden size
-        n_out = 2   # lat, lon
+        n_hid = 256  # hidden size
+        n_out = 4   # lat, lon
         
         # Epochs and learning rate
-        epochs = 20
-        lr = 1e-3
-        
+        epochs = 100
+        lr = {"rnn": 1e-3, "lstm": 1e-3, "gru": 1e-3, "transformer": 1e-4}[model_name]
+        print(f"Using learning rate: {lr}")
         # -------------------------
         if Path(models).exists():
             print("Loading existing model:")
@@ -204,7 +249,7 @@ if __name__ == "__main__":
             base_folder,
             train_frac=0.7,
             IN_COLS = ["Latitude", "Longitude", "SOG", "COG"],
-            DELTA_COLS = ["dLatitude", "dLongitude"],
+            DELTA_COLS = ["dLatitude", "dLongitude", "dSOG", "dCOG"],
         )
         print("Global input mean:", global_in_mean)
         print("Global input std:",  global_in_std)
@@ -297,14 +342,13 @@ if __name__ == "__main__":
                 # Show under or overfitting
                 train_loss_total.extend(train_loss)
                 val_loss_total.extend(val_loss)
-        
+    
         # ----------------------------
         # Save model
         torch.save(model.state_dict(), models)
         
         # Show plots?
         plot = True
-        plot_trajectory = False
         
         # ----------------------------
         # Plot training and validation loss
@@ -317,33 +361,8 @@ if __name__ == "__main__":
             plt.ylabel("Loss")
             plt.legend()
             plt.title("reports/Training and Validation Loss")
-            #plt.savefig("reports/training_validation_loss_temp.png")
-            plt.show()
-                
+            plt.savefig("reports/training_validation_loss_" + model_name + ".png")
+
             # ----------------------------
             # Evaluate on all test sets
-            evaluate_model(model, tests_to_run, device)
-
-            
-            # ----------------------------
-        if plot_trajectory:
-            # pick 5 random test sequences and do full rollout
-            random_runs = random.sample(tests_to_run, min(5, len(tests_to_run)))
-            for example_seq, _ in random_runs:
-                (train_X, train_y), (val_X, val_y), (test_X, test_y) = load_and_split_data(
-                    example_seq,
-                    in_mean=global_in_mean,
-                    in_std=global_in_std,
-                    delta_mean=global_delta_mean,
-                    delta_std=global_delta_std,
-                )
-                trajectory_prediction(
-                    model,
-                    test_X,
-                    in_mean=global_in_mean,
-                    in_std=global_in_std,
-                    delta_mean=global_delta_mean,
-                    delta_std=global_delta_std,
-                    device=device,
-                    seq_len=50,   # or whatever seq_len you trained with
-                )
+            evaluate_model(model, tests_to_run, device, model_name)
