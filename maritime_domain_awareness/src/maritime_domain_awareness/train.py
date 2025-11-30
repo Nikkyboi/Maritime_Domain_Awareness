@@ -16,7 +16,7 @@ from .data import (
     compute_global_norm_stats,
     find_all_parquet_files,
 )
-from .evaluate import evaluate_model, rollout_full_sequence
+from .evaluate import evaluate_model, trajectory_prediction
 from .models import Load_model
 from .KalmanFilterWrapper import KalmanFilterWrapper
 #from PlotToWorldMap import PlotToWorldMap
@@ -158,7 +158,8 @@ if __name__ == "__main__":
     # Options: "rnn", "lstm", "gru", "transformer", "kalman"
     #model_name = "Transformer"
     #models = ["rnn", "lstm", "gru", "transformer"]
-    models = ["lstm"]
+    models = ["rnn", "gru", "transformer"]
+    #models = ["lstm"]
     
     for model_name in models:
         # Look for the existing model
@@ -303,11 +304,12 @@ if __name__ == "__main__":
         
         # Show plots?
         plot = True
+        plot_trajectory = False
         
         # ----------------------------
         # Plot training and validation loss
         # This shows under or overfitting
-        if plot == True:
+        if plot:
             # Show training and validation loss
             plt.plot(train_loss_total, label="Train Loss")
             plt.plot(val_loss_total, label="Validation Loss")
@@ -324,7 +326,7 @@ if __name__ == "__main__":
 
             
             # ----------------------------
-            
+        if plot_trajectory:
             # pick 5 random test sequences and do full rollout
             random_runs = random.sample(tests_to_run, min(5, len(tests_to_run)))
             for example_seq, _ in random_runs:
@@ -335,7 +337,7 @@ if __name__ == "__main__":
                     delta_mean=global_delta_mean,
                     delta_std=global_delta_std,
                 )
-                rollout_full_sequence(
+                trajectory_prediction(
                     model,
                     test_X,
                     in_mean=global_in_mean,

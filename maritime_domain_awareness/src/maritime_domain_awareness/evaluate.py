@@ -5,6 +5,8 @@ import numpy as np
 import pandas as pd
 from pathlib import Path
 from .models import Load_model
+from .visualize import haversine
+from .data import AISTrajectorySeq2Seq, load_and_split_data, compute_global_norm_stats
 
 def evaluate_model_on_sequence(model, test_loader, device):
     """
@@ -90,7 +92,7 @@ def evaluate_model(model : nn.Module, tests_to_run : list, device : torch.device
     print(f"Global average test loss over {len(all_test_losses)} sequences: {global_avg:.6f}")
 
 
-def rollout_full_sequence(
+def trajectory_prediction(
     model,
     X_seq,                # torch tensor [N, 4] normalized inputs for ONE file
     in_mean,
@@ -166,14 +168,53 @@ def rollout_full_sequence(
     true_lon_seg = true_lon[seq_len - 1 : seq_len - 1 + len(pred_lon)]
 
     # ----- plot one actual vs one predicted trajectory -----
-    plt.figure(figsize=(6, 6))
+    plt.figure(figsize=(7, 7))
+
+    # Trajectories
     plt.plot(true_lon_seg, true_lat_seg, label="Actual", linewidth=1)
     plt.plot(pred_lon,     pred_lat,     label="Predicted", linewidth=1)
-    plt.scatter(true_lon_seg[0], true_lat_seg[0], marker="o", color="green", label="Start")
-    plt.scatter(true_lon_seg[-1], true_lat_seg[-1], marker="x", color="red", label="End")
+
+    # Start marker
+    plt.scatter(true_lon_seg[0], true_lat_seg[0],
+                marker="o", color="green", s=80, label="Start")
+
+    # Final markers
+    plt.scatter(true_lon_seg[-1], true_lat_seg[-1],
+                marker="x", color="blue",  s=80, label="End (Actual)")
+    plt.scatter(pred_lon[-1],     pred_lat[-1],
+                marker="x", color="red",   s=80, label="End (Predicted)")
+
+    # Line between actual end and predicted end
+    plt.plot(
+        [true_lon_seg[-1], pred_lon[-1]],
+        [true_lat_seg[-1], pred_lat[-1]],
+        color="purple", linestyle="--", linewidth=1.5, label="Final error"
+    )
+
+    # Compute haversine distance (meters)
+    error_m = haversine(
+        true_lat_seg[-1], true_lon_seg[-1],
+        pred_lat[-1],     pred_lon[-1]
+    )
+
+    # ---- add text with distance next to the line ----
+    mid_lon = (true_lon_seg[-1] + pred_lon[-1]) / 2
+    mid_lat = (true_lat_seg[-1] + pred_lat[-1]) / 2
+
+    plt.text(
+        mid_lon,
+        mid_lat,
+        f"{error_m:.1f} m",
+        ha="center",
+        va="bottom",
+        fontsize=10,
+        color="purple",
+        bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="purple", alpha=0.8),
+    )
+
     plt.xlabel("Longitude")
     plt.ylabel("Latitude")
-    plt.title("Full-sequence rollout (one continuous trajectory)")
+    plt.title(f"Trajectory Prediction ({seq_len} min)")
     plt.legend()
     plt.grid(True, alpha=0.3)
     plt.tight_layout()
@@ -199,10 +240,55 @@ if __name__ == "__main__":
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     else :
         print(f"Model file not found: {model_path}")
+    
+    # Find all training sequences    
+    base_folder = Path("data/Processed/")
+    from .data import find_all_parquet_files
+    training_sequences = find_all_parquet_files(base_folder)
+    
+    # Evaluate the biggest error sequences
+    global_in_mean, global_in_std, global_delta_mean, global_delta_std = compute_global_norm_stats(
+            base_folder,
+            train_frac=0.7,
+            IN_COLS = ["Latitude", "Longitude", "SOG", "COG"],
+            DELTA_COLS = ["dLatitude", "dLongitude"],
+        )
+    
+    each_sequence_losses = []
+    sequence_paths = []
+    for seq_path in training_sequences:
+        (X_train, y_train), (X_val, y_val), (X_test, y_test) = load_and_split_data(
+            seq_path,
+            in_mean=global_in_mean,
+            in_std=global_in_std,
+            delta_mean=global_delta_mean,
+            delta_std=global_delta_std,
+        )
+        test_dataset = AISTrajectorySeq2Seq(X_test, y_test, seq_len)
+        test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=32, shuffle=False)
+        _, _, avg_loss = evaluate_model_on_sequence(model, test_loader, device)
+        each_sequence_losses.append(avg_loss)
+        sequence_paths.append(seq_path)
+    
+    # Get top 5 worst sequences
+    each_sequence_losses = np.array(each_sequence_losses)
+    worst_indices = np.argsort(-each_sequence_losses)[:5]
+    tests_to_run = []
+    for idx in worst_indices:
+        seq_path = sequence_paths[idx]
+        (X_train, y_train), (X_val, y_val), (X_test, y_test) = load_and_split_data(
+            seq_path,
+            in_mean=global_in_mean,
+            in_std=global_in_std,
+            delta_mean=global_delta_mean,
+            delta_std=global_delta_std,
+        )
+        test_dataset = AISTrajectorySeq2Seq(X_test, y_test, seq_len)
+        test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=32, shuffle=False)
+        tests_to_run.append((seq_path, test_loader))
         
-    # Load a random test dataset and evaluate
-    test_file = "data/Processed/MMSI=219005901/Segment=0/513774f9fb5b4cabba2085564bb84c5c-0.parquet"
-    from .data import AISTrajectorySeq2Seq, load_and_split_data, compute_global_norm_stats
+    # Load one of the worst sequences and do trajectory prediction
+    test_file = sequence_paths[worst_indices[0]]
     base_folder = Path("data/Processed/")
     global_in_mean, global_in_std, global_delta_mean, global_delta_std = compute_global_norm_stats(
             base_folder,
@@ -222,7 +308,7 @@ if __name__ == "__main__":
     test_dataset = AISTrajectorySeq2Seq(X_test, y_test, seq_len)
     test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=32, shuffle=False)
     tests_to_run = [(Path(test_file), test_loader)]
-    rollout_full_sequence(
+    trajectory_prediction(
         model,
         X_seq=torch.tensor(X_test, dtype=torch.float32),
         in_mean=global_in_mean,
