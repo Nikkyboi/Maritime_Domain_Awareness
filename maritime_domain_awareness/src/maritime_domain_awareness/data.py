@@ -41,7 +41,7 @@ class AISTrajectorySeq2Seq(Dataset):
     
     
 def load_and_split_data(
-    input_file: str | Path,
+    input_files: str | Path,
     train_frac: float = 0.7,
     val_frac: float = 0.15,
     in_mean = None,
@@ -52,15 +52,23 @@ def load_and_split_data(
     """
     Load and split the dataset into train, validation, and test sets.
     """
-    input_file = Path(input_file)
-    
-    if input_file.suffix == ".csv":
-        df = pd.read_csv(input_file)
-    elif input_file.suffix == ".parquet":
-        df = pd.read_parquet(input_file)
-    else:
-        raise ValueError(f"Unsupported file format: {input_file.suffix}")
-    
+
+    if isinstance(input_files, (str, Path)):
+        input_files = [input_files]
+
+    dfs = []
+    for f in input_files:
+        f = Path(f)
+        if f.suffix == ".csv":
+            df = pd.read_csv(f)
+        elif f.suffix == ".parquet":
+            df = pd.read_parquet(f)
+        else:
+            raise ValueError(f"Unsupported file format: {f.suffix}")
+        dfs.append(df)
+
+    # Concatenate all files chronologically within this chunk
+    df = pd.concat(dfs, ignore_index=True)
 
     # ---- Select input + output columns ----
     in_cols  = ["Latitude", "Longitude", "SOG", "COG"]
@@ -79,7 +87,7 @@ def load_and_split_data(
         return diff
 
     df["dCOG"] = circular_diff_deg(df["COG"], df["COG"].shift(1)).fillna(0.0)
-
+    
     out_cols = ["dLatitude", "dLongitude", "dSOG", "dCOG"] # predict deltas of lat, lon, SOG, COG
     
     N = len(df)

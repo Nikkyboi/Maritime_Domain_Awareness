@@ -111,7 +111,7 @@ def trajectory_prediction(
     pred_lon_full = np.full(N, np.nan, dtype=np.float64)
     pred_sog_full = np.full(N, np.nan, dtype=np.float64)
     pred_cog_full = np.full(N, np.nan, dtype=np.float64)
-
+    
     # SOG/COG mode setup
     if sog_cog_mode == "constant":
         base_sog_cog_norm = X_in[base_idx, 2:4].clone()   # normalized
@@ -221,15 +221,21 @@ def trajectory_prediction(
         pred_lat[-1], pred_lon[-1],
     )
 
+    past_start = first_future_idx - seq_len   # inclusive
+    past_end   = base_idx                     # inclusive
+
+    true_lat_past = true_lat_full[past_start:past_end + 1]
+    true_lon_past = true_lon_full[past_start:past_end + 1]
+
     # ----- plot -----
     plt.figure(figsize=(7, 7))
-
-    plt.plot(true_lon, true_lat, label=f"True: base + {future_steps} steps", linewidth=1)
-    plt.plot(pred_lon, pred_lat, label=f"Predicted {future_steps} steps", linewidth=1)
+    plt.plot(true_lon_past, true_lat_past, label=f"Previous Trajectory ({seq_len} steps)", linewidth=1, color="blue", alpha=0.5)
+    plt.plot(true_lon, true_lat, label=f"True: {future_steps} steps", linewidth=2)
+    plt.plot(pred_lon, pred_lat, label=f"Predicted: {future_steps} steps", linewidth=2)
 
     # Start marker: base point (where we start predicting from)
     plt.scatter(true_lon[0], true_lat[0],
-                marker="o", color="green", s=80, label="Start (base true)")
+                marker="o", color="green", s=80, label="Start")
 
     # Final markers
     plt.scatter(true_lon[-1], true_lat[-1],
@@ -266,7 +272,7 @@ def trajectory_prediction(
     plt.ylabel("Latitude")
     plt.title(
         f"Predicting {future_steps} steps from last known point "
-        f"(error = {error_m:.1f} m, horizon = {future_minutes} min)"
+        f"(error = {error_m:.1f} m, steps = {future_minutes} min)"
     )
     plt.legend()
     plt.grid(True, alpha=0.3)
@@ -295,10 +301,10 @@ if __name__ == "__main__":
     # Parameters
     n_in = 4      # Latitude, Longitude, SOG, COG
     n_out = 4     # predict dLatitude, dLongitude
-    n_hid = 64    # hidden size for RNN/LSTM/GRU/Transformer
+    n_hid = 256    # hidden size for RNN/LSTM/GRU/Transformer
     
     # Sequence length for training and rollout
-    seq_len = 50
+    seq_len = 20
 
     # load a model and evaluate on test data
     model_name = "transformer"
@@ -317,7 +323,13 @@ if __name__ == "__main__":
     # Trajectory_prediction function
     #path = "data/Processed/MMSI=219002906/Segment=2/513774f9fb5b4cabba2085564bb84c5c-0.parquet"
     path = "data/Processed/MMSI=219001258/Segment=1/513774f9fb5b4cabba2085564bb84c5c-0.parquet"
+    #path = "data/Processed/MMSI=219001204/Segment=0/513774f9fb5b4cabba2085564bb84c5c-0.parquet"
+    #path = "data/Processed/MMSI=219000617/Segment=11/513774f9fb5b4cabba2085564bb84c5c-0.parquet"
+    #path = "data/Processed/MMSI=219000617/Segment=25/513774f9fb5b4cabba2085564bb84c5c-0.parquet"
+    #path = "data/Processed/MMSI=219005931/Segment=1/513774f9fb5b4cabba2085564bb84c5c-0.parquet"
+    #path = "data/Processed/MMSI=219005941/Segment=0/513774f9fb5b4cabba2085564bb84c5c-0.parquet"
+    
     df = pd.read_parquet(path)
     X_seq = torch.from_numpy(df[["Latitude", "Longitude", "SOG", "COG"]].to_numpy("float32"))
 
-    trajectory_prediction(model, X_seq, device, seq_len=50, future_steps=10, sog_cog_mode="predicted")
+    trajectory_prediction(model, X_seq, device, seq_len=20, future_steps=50, sog_cog_mode="predicted")

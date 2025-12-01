@@ -38,8 +38,8 @@ def train(
     model.to(device)
     
     # Loss function and optimizer
-    #criterion = nn.MSELoss()
-    criterion = nn.SmoothL1Loss()
+    criterion = nn.MSELoss()
+    #criterion = nn.SmoothL1Loss(reduction="none")
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
 
     # Track loss
@@ -203,8 +203,8 @@ if __name__ == "__main__":
     # Choose the name of the model to train
     # Options: "rnn", "lstm", "gru", "transformer", "kalman"
     #model_name = "Transformer"
-    models = ["rnn", "lstm", "gru", "transformer"]
-    #models = ["transformer"]
+    #models = ["rnn", "lstm", "gru", "transformer"]
+    models = ["transformer"]
     
     for model_name in models:
         # Look for the existing model
@@ -220,7 +220,7 @@ if __name__ == "__main__":
         
         # Epochs and learning rate
         epochs = 100
-        lr = {"rnn": 1e-3, "lstm": 1e-3, "gru": 1e-3, "transformer": 1e-4}[model_name]
+        lr = {"rnn": 1e-3, "lstm": 1e-3, "gru": 1e-3, "transformer": 1e-3}[model_name]
         print(f"Using learning rate: {lr}")
         # -------------------------
         if Path(models).exists():
@@ -242,6 +242,16 @@ if __name__ == "__main__":
         training_sequences = find_all_parquet_files(base_folder)
         print("Found training sequences:", len(training_sequences))
         
+        def split_into_n_chunks(seq_list, n_chunks):
+            """Split seq_list into n_chunks parts as evenly as possible."""
+            k, m = divmod(len(seq_list), n_chunks)
+            # First m chunks will have size k+1, the rest size k
+            return [
+                seq_list[i * k + min(i, m):(i + 1) * k + min(i + 1, m)]
+                for i in range(n_chunks)
+            ]
+
+        chunks = split_into_n_chunks(training_sequences, 4)
         
         # ----------------------------
         # Compute global normalization stats
@@ -264,21 +274,23 @@ if __name__ == "__main__":
         i = 0
         
         tests_to_run = []
+
+        # Split the training_sequences into 5 equal sequences
         
         # ----------------------------
         # Training sequence loop
         # For each training sequence file, train the model
-        for seq in training_sequences:
-            print("Training on sequence:", seq)
+        for chunk_idx, seq_files in enumerate(chunks):
+            #print("Training on sequence:", seq)
             # Load data
-            input_file = seq
+            #input_file = seq
             
             # split into train, test and validation sets:
             # Input = latitude, longitude, sog, cog, heading
             # Output = latitude, longitude
             # split 70/15/15
             (train_X, train_y), (val_X, val_y), (test_X, test_y) = load_and_split_data(
-                input_file,
+                input_files = seq_files,
                 in_mean=global_in_mean,
                 in_std=global_in_std,
                 delta_mean=global_delta_mean,
@@ -290,6 +302,15 @@ if __name__ == "__main__":
             # Choose sequence length (number of timesteps per sample)
             seq_len = 50
             
+            if len(train_X) <= seq_len + 1:
+                print(f"Skipping chunk {chunk_idx}: Train set too small ({len(train_X)} <= {seq_len + 1})")
+                continue
+
+            if len(val_X) <= seq_len + 1:
+                print(f"Skipping chunk {chunk_idx}: Val set too small ({len(val_X)} <= {seq_len + 1})")
+                continue
+            
+            """
             # Check if we have enough data for at least one sequence
             # We need at least seq_len + 1 samples
             if len(train_X) <= seq_len + 1:
@@ -301,6 +322,7 @@ if __name__ == "__main__":
                 # Usually better to skip the file to avoid errors in val_loader
                 print(f"Skipping sequence {seq}: Val set too small ({len(val_X)} <= {seq_len + 1})")
                 continue
+            """
 
             # Create datasets and dataloaders
             train_dataset = AISTrajectorySeq2Seq(train_X, train_y, seq_len)
@@ -313,7 +335,7 @@ if __name__ == "__main__":
             test_loader  = DataLoader(test_dataset,  batch_size=32, shuffle=False)
 
             # Save test loaders for later evaluation
-            tests_to_run.append((seq, test_loader))
+            tests_to_run.append((f"chunk_{chunk_idx}", test_loader))
             
             if models == "kalman":
                 model = KalmanFilterWrapper(dt=1.0, process_variance=1e-5, measurement_variance=0.1, init_error=1.0)
