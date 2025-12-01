@@ -3,7 +3,8 @@ data/Raw/aisdk-2025-*
 data/Processed/*
 
 docs/site/
-
+*.png
+*.pth
 *.parquet
 *.csv 
 # test cache
