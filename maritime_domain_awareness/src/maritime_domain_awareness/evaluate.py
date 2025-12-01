@@ -83,6 +83,7 @@ def evaluate_model(model : nn.Module, tests_to_run : list, device : torch.device
     plt.title("Test loss per boat sequence")
     plt.tight_layout()
     plt.savefig("reports/test_loss_per_sequence_" + name + ".png")
+    plt.close()
     #plt.show()
 
     global_avg = sum(all_test_losses) / len(all_test_losses)
