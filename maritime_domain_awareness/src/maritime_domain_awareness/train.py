@@ -195,6 +195,8 @@ if __name__ == "__main__":
     """
     # ----------------------------
     # Set device (Use GPU if available)
+    # dataset = MyDataset(...)
+    
     device = None
     if device is None:
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -203,8 +205,8 @@ if __name__ == "__main__":
     # Choose the name of the model to train
     # Options: "rnn", "lstm", "gru", "transformer", "kalman"
     #model_name = "Transformer"
-    #models = ["rnn", "lstm", "gru", "transformer"]
-    models = ["transformer"]
+    models = ["rnn", "lstm", "gru", "transformer"]
+    #models = ["transformer"]
     
     for model_name in models:
         # Look for the existing model
@@ -215,12 +217,12 @@ if __name__ == "__main__":
         
         # Inputs, Hidden, Outputs
         n_in = 4    # lat, lon
-        n_hid = 256  # hidden size
+        n_hid = 128  # hidden size
         n_out = 4   # lat, lon
         
         # Epochs and learning rate
         epochs = 100
-        lr = {"rnn": 1e-3, "lstm": 1e-3, "gru": 1e-3, "transformer": 1e-3}[model_name]
+        lr = {"rnn": 1e-3, "lstm": 1e-3, "gru": 1e-3, "transformer": 1e-4}[model_name]
         print(f"Using learning rate: {lr}")
         # -------------------------
         if Path(models).exists():
@@ -251,7 +253,8 @@ if __name__ == "__main__":
                 for i in range(n_chunks)
             ]
 
-        chunks = split_into_n_chunks(training_sequences, 4)
+        # Split training sequences into 8 chunks
+        chunks = split_into_n_chunks(training_sequences, 1)
         
         # ----------------------------
         # Compute global normalization stats
@@ -278,7 +281,6 @@ if __name__ == "__main__":
         # Split the training_sequences into 5 equal sequences
         
         # ----------------------------
-        # Training sequence loop
         # For each training sequence file, train the model
         for chunk_idx, seq_files in enumerate(chunks):
             #print("Training on sequence:", seq)
@@ -300,16 +302,8 @@ if __name__ == "__main__":
             print("y_train.shape:", train_y.shape)
 
             # Choose sequence length (number of timesteps per sample)
-            seq_len = 50
-            
-            if len(train_X) <= seq_len + 1:
-                print(f"Skipping chunk {chunk_idx}: Train set too small ({len(train_X)} <= {seq_len + 1})")
-                continue
-
-            if len(val_X) <= seq_len + 1:
-                print(f"Skipping chunk {chunk_idx}: Val set too small ({len(val_X)} <= {seq_len + 1})")
-                continue
-            
+            seq_len = 20
+        
             """
             # Check if we have enough data for at least one sequence
             # We need at least seq_len + 1 samples

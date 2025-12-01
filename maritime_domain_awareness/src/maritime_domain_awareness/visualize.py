@@ -7,6 +7,7 @@ from math import radians, cos, sin, sqrt, atan2
 import torch
 from .models import Load_model
 from .data import AISTrajectorySeq2Seq, load_and_split_data, compute_global_norm_stats
+from .PlotToWorldMap import PlotToWorldMap
 
 def haversine(lat1, lon1, lat2, lon2):
     """
@@ -301,7 +302,7 @@ if __name__ == "__main__":
     # Parameters
     n_in = 4      # Latitude, Longitude, SOG, COG
     n_out = 4     # predict dLatitude, dLongitude
-    n_hid = 256    # hidden size for RNN/LSTM/GRU/Transformer
+    n_hid = 128    # hidden size for RNN/LSTM/GRU/Transformer
     
     # Sequence length for training and rollout
     seq_len = 20
@@ -322,9 +323,9 @@ if __name__ == "__main__":
     
     # Trajectory_prediction function
     #path = "data/Processed/MMSI=219002906/Segment=2/513774f9fb5b4cabba2085564bb84c5c-0.parquet"
-    path = "data/Processed/MMSI=219001258/Segment=1/513774f9fb5b4cabba2085564bb84c5c-0.parquet"
+    #path = "data/Processed/MMSI=219001258/Segment=1/513774f9fb5b4cabba2085564bb84c5c-0.parquet"
     #path = "data/Processed/MMSI=219001204/Segment=0/513774f9fb5b4cabba2085564bb84c5c-0.parquet"
-    #path = "data/Processed/MMSI=219000617/Segment=11/513774f9fb5b4cabba2085564bb84c5c-0.parquet"
+    path = "data/Processed/MMSI=219000617/Segment=11/513774f9fb5b4cabba2085564bb84c5c-0.parquet"
     #path = "data/Processed/MMSI=219000617/Segment=25/513774f9fb5b4cabba2085564bb84c5c-0.parquet"
     #path = "data/Processed/MMSI=219005931/Segment=1/513774f9fb5b4cabba2085564bb84c5c-0.parquet"
     #path = "data/Processed/MMSI=219005941/Segment=0/513774f9fb5b4cabba2085564bb84c5c-0.parquet"
@@ -332,4 +333,10 @@ if __name__ == "__main__":
     df = pd.read_parquet(path)
     X_seq = torch.from_numpy(df[["Latitude", "Longitude", "SOG", "COG"]].to_numpy("float32"))
 
-    trajectory_prediction(model, X_seq, device, seq_len=20, future_steps=50, sog_cog_mode="predicted")
+    true_lat, true_lon, pred_lat, pred_lon, error_m = trajectory_prediction(model, X_seq, device, seq_len=20, future_steps=50, sog_cog_mode="predicted")
+    
+    
+    # Plot on world map
+    #actualPoint = [torch.tensor(np.vstack((true_lat, true_lon)).T)]
+    #predictedPoint = [torch.tensor(np.vstack((pred_lat, pred_lon)).T)]
+    PlotToWorldMap(actualPoint, predictedPoint)
