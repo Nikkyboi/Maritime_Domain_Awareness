@@ -1,4 +1,5 @@
 # Standard library imports
+import logging
 from pathlib import Path
 import random
 import copy
@@ -30,6 +31,7 @@ def train(
     learning_rate: float = 1e-3,
     dynamic_epochs: bool = False,
     device: str | torch.device | None = None,
+    logger: logging.Logger | None = None,
 ):
     # Set device (Use GPU if available)
     if device is None:
@@ -141,11 +143,16 @@ def train(
         avg_val_loss = val_loss / max(val_batches, 1)
         validation_loss.append(avg_val_loss)
         
-        print(
+        logger.info(
             f"Epoch {epoch+1}/{max_epochs}, "
             f"Train Loss: {avg_train_loss:.8f}, "
             f"Val Loss: {avg_val_loss:.8f}"
         )
+        #print(
+        #    f"Epoch {epoch+1}/{max_epochs}, "
+        #    f"Train Loss: {avg_train_loss:.8f}, "
+        #    f"Val Loss: {avg_val_loss:.8f}"
+        #)
         
         # ----------------------
         # Early stopping logic
@@ -201,12 +208,35 @@ if __name__ == "__main__":
     if device is None:
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     
+    # Simple logging setup
+    logger = logging.getLogger("ais_training")
+    logger.setLevel(logging.INFO)
+
+    # Avoid adding handlers twice if this file is imported
+    if not logger.handlers:
+        # Log to stdout (so you see it in HPC job output)
+        console_handler = logging.StreamHandler()
+        console_handler.setLevel(logging.INFO)
+
+        # Log to file (so you can inspect later)
+        file_handler = logging.FileHandler("training.log")
+        file_handler.setLevel(logging.INFO)
+
+        formatter = logging.Formatter(
+            "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+        )
+        console_handler.setFormatter(formatter)
+        file_handler.setFormatter(formatter)
+
+        logger.addHandler(console_handler)
+        logger.addHandler(file_handler)
+
     # --------------------------
     # Choose the name of the model to train
     # Options: "rnn", "lstm", "gru", "transformer", "kalman"
     #model_name = "Transformer"
-    models = ["rnn", "lstm", "gru", "transformer"]
-    #models = ["transformer"]
+    #models = ["rnn", "lstm", "gru", "transformer"]
+    models = ["rnn"]
     
     for model_name in models:
         # Look for the existing model
@@ -217,11 +247,11 @@ if __name__ == "__main__":
         
         # Inputs, Hidden, Outputs
         n_in = 4    # lat, lon
-        n_hid = 128  # hidden size
+        n_hid = 256  # hidden size
         n_out = 4   # lat, lon
         
         # Epochs and learning rate
-        epochs = 100
+        epochs = 200
         lr = {"rnn": 1e-3, "lstm": 1e-3, "gru": 1e-3, "transformer": 1e-4}[model_name]
         print(f"Using learning rate: {lr}")
         # -------------------------
@@ -254,7 +284,7 @@ if __name__ == "__main__":
             ]
 
         # Split training sequences into 8 chunks
-        chunks = split_into_n_chunks(training_sequences, 1)
+        chunks = split_into_n_chunks(training_sequences, 60)
         
         # ----------------------------
         # Compute global normalization stats
@@ -302,7 +332,7 @@ if __name__ == "__main__":
             print("y_train.shape:", train_y.shape)
 
             # Choose sequence length (number of timesteps per sample)
-            seq_len = 20
+            seq_len = 50
         
             """
             # Check if we have enough data for at least one sequence
@@ -352,7 +382,8 @@ if __name__ == "__main__":
                     val_loader,
                     num_epochs=epochs,
                     learning_rate=lr,
-                    dynamic_epochs = True
+                    dynamic_epochs = True,
+                    logger = logger,
                 )
 
                 # Show under or overfitting
@@ -378,7 +409,7 @@ if __name__ == "__main__":
             plt.legend()
             plt.title("reports/Training and Validation Loss")
             plt.savefig("reports/training_validation_loss_" + model_name + ".png")
-
+            plt.close()
             # ----------------------------
             # Evaluate on all test sets
             evaluate_model(model, tests_to_run, device, model_name)
