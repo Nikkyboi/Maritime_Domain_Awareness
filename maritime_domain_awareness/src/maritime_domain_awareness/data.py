@@ -144,7 +144,7 @@ IN_COLS = ["Latitude", "Longitude", "SOG", "COG"]
 #DELTA_COLS = ["dLatitude", "dLongitude"]
 DELTA_COLS = ["dLatitude", "dLongitude", "dSOG", "dCOG"]
 
-def compute_global_norm_stats(base_folder: Path = Path("data/Processed/"), train_frac: float = 0.7, IN_COLS = IN_COLS, DELTA_COLS = DELTA_COLS):
+def compute_global_norm_stats(base_folder: Path = Path("maritime_domain_awareness/data/Raw/processed/"), train_frac: float = 0.7, IN_COLS = IN_COLS, DELTA_COLS = DELTA_COLS):
     """
     Compute global mean/std for:
       - IN_COLS  = [Latitude, Longitude, SOG, COG]   (inputs)

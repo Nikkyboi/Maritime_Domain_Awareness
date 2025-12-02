@@ -8,8 +8,8 @@ import torch
 
 from CompareModels import compare_models
 from KalmanTrajectoryPrediction import kalman_trajectory_prediction
-from .models import Load_model
-from .data import AISTrajectorySeq2Seq, load_and_split_data, compute_global_norm_stats
+from models import Load_model
+from data import AISTrajectorySeq2Seq, load_and_split_data, compute_global_norm_stats
 
 def haversine(lat1, lon1, lat2, lon2):
     """
@@ -304,7 +304,7 @@ if __name__ == "__main__":
     # Parameters
     n_in = 4      # Latitude, Longitude, SOG, COG
     n_out = 4     # predict dLatitude, dLongitude
-    n_hid = 128    # hidden size for RNN/LSTM/GRU/Transformer
+    n_hid = 256    # hidden size for RNN/LSTM/GRU/Transformer
     
     # Sequence length for training and rollout
     seq_len = 50
@@ -315,7 +315,7 @@ if __name__ == "__main__":
 
     print("\nLoading available models...")
     for model_type in model_types:
-        model_path = f"models/ais_{model_type}_model.pth"
+        model_path = f"maritime_domain_awareness/models/ais_{model_type}_model.pth"
         if Path(model_path).exists():
             try:
                 model = Load_model.load_model(model_type, n_in, n_out, n_hid)
@@ -330,27 +330,16 @@ if __name__ == "__main__":
     # ------------------------------------------
     
     # Trajectory_prediction function
-    #path = "data/Processed/MMSI=219002906/Segment=2/513774f9fb5b4cabba2085564bb84c5c-0.parquet"
-    #path = "data/Processed/MMSI=219001258/Segment=1/513774f9fb5b4cabba2085564bb84c5c-0.parquet"
-    #path = "data/Processed/MMSI=219001204/Segment=0/513774f9fb5b4cabba2085564bb84c5c-0.parquet"
-    path = "data/Processed/MMSI=219000617/Segment=11/513774f9fb5b4cabba2085564bb84c5c-0.parquet"
-    #path = "data/Processed/MMSI=219000617/Segment=25/513774f9fb5b4cabba2085564bb84c5c-0.parquet"
-    #path = "data/Processed/MMSI=219005931/Segment=1/513774f9fb5b4cabba2085564bb84c5c-0.parquet"
-    #path = "data/Processed/MMSI=219005941/Segment=0/513774f9fb5b4cabba2085564bb84c5c-0.parquet"
+    #path = "maritime_domain_awareness/data/Raw/processed/MMSI=219002906/Segment=2/513774f9fb5b4cabba2085564bb84c5c-0.parquet"
+    #path = "maritime_domain_awareness/data/Raw/processed/MMSI=219001258/Segment=1/513774f9fb5b4cabba2085564bb84c5c-0.parquet"
+    #path = "maritime_domain_awareness/data/Raw/processed/MMSI=219001204/Segment=0/513774f9fb5b4cabba2085564bb84c5c-0.parquet"
+    path = "maritime_domain_awareness/data/Raw/processed/MMSI=219000617/Segment=11/513774f9fb5b4cabba2085564bb84c5c-0.parquet"
+    #path = "maritime_domain_awareness/data/Raw/processed/MMSI=219000617/Segment=25/513774f9fb5b4cabba2085564bb84c5c-0.parquet"
+    #path = "maritime_domain_awareness/data/Raw/processed/MMSI=219005931/Segment=1/513774f9fb5b4cabba2085564bb84c5c-0.parquet"
+    #path = "maritime_domain_awareness/data/Raw/processed/MMSI=219005941/Segment=0/513774f9fb5b4cabba2085564bb84c5c-0.parquet"
     
     df = pd.read_parquet(path)
     X_seq = torch.from_numpy(df[["Latitude", "Longitude", "SOG", "COG"]].to_numpy("float32"))
-
-    true_lat, true_lon, pred_lat, pred_lon, error_m = trajectory_prediction(model, X_seq, device, seq_len=20, future_steps=50, sog_cog_mode="predicted")
-    
-    actual_trajectory = torch.tensor(np.column_stack((true_lat, true_lon)), dtype=torch.float32)
-    predicted_trajectory = torch.tensor(np.column_stack((pred_lat, pred_lon)), dtype=torch.float32)
-
-    # Create dictionary for multiple model predictions format
-    model_predictions = {
-        "Predicted": predicted_trajectory
-    }
-    model_names = ["Predicted"]
 
     models_to_compare = []
 
@@ -373,7 +362,7 @@ if __name__ == "__main__":
     models_to_compare.append({
         "name": "Kalman Filter",
         "predictor": kalman_trajectory_prediction,
-        "kwargs": {},
+        "kwargs": {"haversine": haversine},
         "color": "green"
     })
 

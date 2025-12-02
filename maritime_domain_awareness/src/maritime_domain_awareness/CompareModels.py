@@ -1,7 +1,7 @@
 import numpy as np
 import torch
 import matplotlib.pyplot as plt
-from .PlotToWorldMap import PlotToWorldMap
+from PlotToWorldMap import PlotToWorldMap
 
 def compare_models(X_seq, models_to_compare, seq_len=50, future_steps=50, device=None):
     """

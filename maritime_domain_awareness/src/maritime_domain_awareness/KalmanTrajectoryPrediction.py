@@ -1,6 +1,5 @@
 import numpy as np
-from .models.KalmanFilter import KalmanFilter
-from math import radians, cos, sin, sqrt, atan2        
+from models.KalmanFilter import KalmanFilter
 
 def kalman_trajectory_prediction(
     X_seq_raw,
