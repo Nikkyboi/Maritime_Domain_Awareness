@@ -5,9 +5,11 @@ import numpy as np
 import pandas as pd
 from math import radians, cos, sin, sqrt, atan2
 import torch
+
+from CompareModels import compare_models
+from KalmanTrajectoryPrediction import kalman_trajectory_prediction
 from .models import Load_model
 from .data import AISTrajectorySeq2Seq, load_and_split_data, compute_global_norm_stats
-from .PlotToWorldMap import PlotToWorldMap
 
 def haversine(lat1, lon1, lat2, lon2):
     """
@@ -305,19 +307,25 @@ if __name__ == "__main__":
     n_hid = 128    # hidden size for RNN/LSTM/GRU/Transformer
     
     # Sequence length for training and rollout
-    seq_len = 20
+    seq_len = 50
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    # load a model and evaluate on test data
-    model_name = "transformer"
-    model_path = "models/ais_" + model_name + "_model.pth"
-    if Path(model_path).exists():
-        print("Loading existing model:")
-        model = Load_model.load_model(model_name, n_in, n_out, n_hid)
-        model.load_state_dict(torch.load(model_path))
-        
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    else :
-        print(f"Model file not found: {model_path}")
+    model_types = ["transformer", "gru", "lstm", "rnn"]
+    loaded_models = {}
+
+    print("\nLoading available models...")
+    for model_type in model_types:
+        model_path = f"models/ais_{model_type}_model.pth"
+        if Path(model_path).exists():
+            try:
+                model = Load_model.load_model(model_type, n_in, n_out, n_hid)
+                model.load_state_dict(torch.load(model_path))
+                loaded_models[model_type] = model
+                print(f"✓ {model_type.upper()} loaded")
+            except Exception as e:
+                print(f"✗ Failed to load {model_type}: {e}")
+        else:
+            print(f"✗ {model_type.upper()} not found")
     
     # ------------------------------------------
     
@@ -335,8 +343,62 @@ if __name__ == "__main__":
 
     true_lat, true_lon, pred_lat, pred_lon, error_m = trajectory_prediction(model, X_seq, device, seq_len=20, future_steps=50, sog_cog_mode="predicted")
     
-    
-    # Plot on world map
-    #actualPoint = [torch.tensor(np.vstack((true_lat, true_lon)).T)]
-    #predictedPoint = [torch.tensor(np.vstack((pred_lat, pred_lon)).T)]
-    PlotToWorldMap(actualPoint, predictedPoint)
+    actual_trajectory = torch.tensor(np.column_stack((true_lat, true_lon)), dtype=torch.float32)
+    predicted_trajectory = torch.tensor(np.column_stack((pred_lat, pred_lon)), dtype=torch.float32)
+
+    # Create dictionary for multiple model predictions format
+    model_predictions = {
+        "Predicted": predicted_trajectory
+    }
+    model_names = ["Predicted"]
+
+    models_to_compare = []
+
+    # Add all loaded neural network models with different colors
+    model_colors = {
+        "transformer": "orange",
+        "gru": "red",
+        "lstm": "purple",
+        "rnn": "brown"
+    }
+
+    for model_type, model in loaded_models.items():
+        models_to_compare.append({
+            "name": model_type.upper(),
+            "predictor": lambda X, m=model, **kw: trajectory_prediction(m, X, device, **kw),
+            "kwargs": {"sog_cog_mode": "predicted"},
+            "color": model_colors[model_type]
+        })
+    # Add Kalman filter
+    models_to_compare.append({
+        "name": "Kalman Filter",
+        "predictor": kalman_trajectory_prediction,
+        "kwargs": {},
+        "color": "green"
+    })
+
+    # EXAMPLE: Add more models here if you want
+    # models_to_compare.append({
+    #     "name": "LSTM",
+    #     "predictor": lstm_trajectory_prediction,  # your function
+    #     "kwargs": {},
+    #     "color": "red"
+    # })
+
+    # Run comparison
+    if len(models_to_compare) > 0:
+        results = compare_models(X_seq, models_to_compare, seq_len=seq_len, future_steps=50, device=device)
+
+        # Print summary
+        print("\n" + "="*50)
+        print("SUMMARY OF RESULTS")
+        print("="*50)
+        for model_name, model_data in results.items():
+            error = model_data["result"]["error_m"]
+            print(f"{model_name:20s}: {error:8.1f} meters")
+        print("="*50)
+
+        # Show all plots
+        plt.show()
+    else:
+        print("No models available to compare. Please train a model first.")
