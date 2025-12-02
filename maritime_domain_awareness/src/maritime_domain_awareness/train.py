@@ -87,6 +87,11 @@ def train(
         optimizer, mode='min', factor=0.5, patience=10
     )
     
+    # Warmup configuration (manually implemented)
+    warmup_epochs = 5
+    base_lr = learning_rate
+    warmup_start_lr = base_lr * 0.1
+    
     # Mixed precision training for faster GPU training
     scaler = torch.amp.GradScaler('cuda') if device.type == 'cuda' else None
     use_amp = device.type == 'cuda'
@@ -210,8 +215,15 @@ def train(
         avg_val_loss = val_loss / max(val_batches, 1)
         validation_loss.append(avg_val_loss)
         
-        # Update learning rate based on validation loss
-        scheduler.step(avg_val_loss)
+        # Manual warmup for first few epochs, then use scheduler
+        if epoch < warmup_epochs:
+            # Linear warmup from warmup_start_lr to base_lr
+            lr = warmup_start_lr + (base_lr - warmup_start_lr) * (epoch / warmup_epochs)
+            for param_group in optimizer.param_groups:
+                param_group['lr'] = lr
+        else:
+            # After warmup, use plateau scheduler
+            scheduler.step(avg_val_loss)
         
         # Update tqdm progress bar with current learning rate
         current_lr = optimizer.param_groups[0]['lr']
@@ -298,11 +310,10 @@ if __name__ == "__main__":
     # Choose the name of the model to train
     # Options: "rnn", "lstm", "gru", "transformer", "kalman"
     #model_name = "Transformer"
-    # models_list = ["rnn", "lstm", "gru", "transformer"]
-    models_list = ["transformer"]
+    models_list = ["rnn", "lstm", "gru", "transformer"]
+    # models_list = ["transformer"]
     
     trained_models = {}  # Store all trained models for comparison
-    
     for model_name in models_list:
         # Look for the existing model
         if model_name == "kalman":
@@ -316,7 +327,7 @@ if __name__ == "__main__":
         n_out = 4   # dLat, dLon, dSOG, dCOG
         
         # Epochs and learning rate
-        epochs = 200  # Shorter run for testing (~1 hour), change to 1000 for full training
+        epochs = 200
         # Learning rates - lower for transformer to prevent instability
         lr = {"rnn": 5e-3, "lstm": 5e-3, "gru": 5e-3, "transformer": 1e-4}[model_name]
         print(f"Using learning rate: {lr}")
