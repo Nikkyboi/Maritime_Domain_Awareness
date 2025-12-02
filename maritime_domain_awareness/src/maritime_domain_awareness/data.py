@@ -35,8 +35,12 @@ class AISTrajectorySeq2Seq(Dataset):
         return max(self.N, 0)
 
     def __getitem__(self, idx: int):
-        x_seq = self.X[idx : idx + self.seq_len]          # [T, n_in]
-        y_seq = self.y[idx + 1 : idx + 1 + self.seq_len]          # [T, 4] deltas
+        # Standard seq2seq alignment:
+        # Input: X[idx : idx+T] = positions at times [t, t+1, ..., t+T-1]
+        # Target: y[idx+1 : idx+T+1] = deltas for times [t+1, t+2, ..., t+T]
+        # Since y[i] = pos[i] - pos[i-1], y[idx+1] is the delta from X[idx] to X[idx+1]
+        x_seq = self.X[idx : idx + self.seq_len]              # [T, n_in]  
+        y_seq = self.y[idx + 1 : idx + 1 + self.seq_len]      # [T, n_out]
         return x_seq, y_seq
     
     
@@ -67,32 +71,42 @@ def load_and_split_data(
             raise ValueError(f"Unsupported file format: {f.suffix}")
         dfs.append(df)
 
-    # Concatenate all files chronologically within this chunk
-    df = pd.concat(dfs, ignore_index=True)
-
     # ---- Select input + output columns ----
     in_cols  = ["Latitude", "Longitude", "SOG", "COG"]
-    #out_cols = ["Latitude", "Longitude"]
-    #out_cols = ["dLatitude", "dLongitude"] # predict deltas of lat, lon
-    
-    # ----- Split into train, val, test -----
-    # Compute deltas on raw df
-    df["dLatitude"]  = df["Latitude"].diff().fillna(0.0)
-    df["dLongitude"] = df["Longitude"].diff().fillna(0.0)
-    df["dSOG"]       = df["SOG"].diff().fillna(0.0)
     
     def circular_diff_deg(a_next, a_prev):
         # returns shortest signed angle difference in (-180, 180]
         diff = (a_next - a_prev + 180) % 360 - 180
         return diff
-
-    df["dCOG"] = circular_diff_deg(df["COG"], df["COG"].shift(1)).fillna(0.0)
     
-    out_cols = ["dLatitude", "dLongitude", "dSOG", "dCOG"] # predict deltas of lat, lon, SOG, COG
+    # RANDOM SPLIT: Randomly assign entire FILES to train/val/test
+    # This preserves temporal sequences within each segment
+    np.random.seed(42)
+    n_files = len(dfs)
+    file_indices = np.arange(n_files)
+    np.random.shuffle(file_indices)
     
-    N = len(df)
-    train_end = int(train_frac * N)
-    val_end   = int((train_frac + val_frac) * N)
+    train_file_end = int(train_frac * n_files)
+    val_file_end = int((train_frac + val_frac) * n_files)
+    
+    train_file_indices = file_indices[:train_file_end]
+    val_file_indices = file_indices[train_file_end:val_file_end]
+    test_file_indices = file_indices[val_file_end:]
+    
+    # Compute deltas WITHIN each file to avoid cross-segment contamination
+    def process_df(df_single):
+        df_single = df_single.copy()
+        df_single["dLatitude"]  = df_single["Latitude"].diff().fillna(0.0)
+        df_single["dLongitude"] = df_single["Longitude"].diff().fillna(0.0)
+        df_single["dSOG"]       = df_single["SOG"].diff().fillna(0.0)
+        df_single["dCOG"] = circular_diff_deg(df_single["COG"], df_single["COG"].shift(1)).fillna(0.0)
+        return df_single
+    
+    train_dfs = [process_df(dfs[i]) for i in train_file_indices]
+    val_dfs = [process_df(dfs[i]) for i in val_file_indices]
+    test_dfs = [process_df(dfs[i]) for i in test_file_indices]
+    
+    out_cols = ["dLatitude", "dLongitude", "dSOG", "dCOG"]
 
     # ----- normalization -----
     if in_mean is None or in_std is None or delta_mean is None or delta_std is None:
@@ -106,28 +120,21 @@ def load_and_split_data(
     mean_delta = pd.Series(delta_mean, index=out_cols)
     std_delta  = pd.Series(delta_std,  index=out_cols)
 
-    df_X = (df[in_cols]    - mean_in)   / std_in
-    df_y = (df[out_cols]   - mean_delta) / std_delta
+    # Normalize each split separately while preserving temporal order
+    def normalize_and_convert(dfs_list):
+        df_concat = pd.concat(dfs_list, ignore_index=True) if dfs_list else pd.DataFrame()
+        if len(df_concat) == 0:
+            return np.array([]), np.array([])
+        df_X = (df_concat[in_cols] - mean_in) / std_in
+        df_y = (df_concat[out_cols] - mean_delta) / std_delta
+        return df_X.to_numpy(dtype="float32"), df_y.to_numpy(dtype="float32")
+    
+    X_train, y_train = normalize_and_convert(train_dfs)
+    X_val, y_val = normalize_and_convert(val_dfs)
+    X_test, y_test = normalize_and_convert(test_dfs)
 
-    # chronological splits (no shuffling)
-    df_train_X = df_X.iloc[:train_end]
-    df_val_X   = df_X.iloc[train_end:val_end]
-    df_test_X  = df_X.iloc[val_end:]
-
-    df_train_y = df_y.iloc[:train_end]
-    df_val_y   = df_y.iloc[train_end:val_end]
-    df_test_y  = df_y.iloc[val_end:]
-
-    print(f"N={N} -> train={len(df_train_X)}, val={len(df_val_X)}, test={len(df_test_X)}")
-
-    X_train = df_train_X.to_numpy(dtype="float32")
-    y_train = df_train_y.to_numpy(dtype="float32")
-
-    X_val   = df_val_X.to_numpy(dtype="float32")
-    y_val   = df_val_y.to_numpy(dtype="float32")
-
-    X_test  = df_test_X.to_numpy(dtype="float32")
-    y_test  = df_test_y.to_numpy(dtype="float32")
+    print(f"Files: train={len(train_dfs)}, val={len(val_dfs)}, test={len(test_dfs)} (RANDOM FILE SPLIT)")
+    print(f"Samples: train={len(X_train)}, val={len(X_val)}, test={len(X_test)}")
 
     # Convert to torch tensors
     X_train_t = torch.from_numpy(X_train)
@@ -144,7 +151,9 @@ IN_COLS = ["Latitude", "Longitude", "SOG", "COG"]
 #DELTA_COLS = ["dLatitude", "dLongitude"]
 DELTA_COLS = ["dLatitude", "dLongitude", "dSOG", "dCOG"]
 
-def compute_global_norm_stats(base_folder: Path = Path("data/Processed/"), train_frac: float = 0.7, IN_COLS = IN_COLS, DELTA_COLS = DELTA_COLS):
+def compute_global_norm_stats(base_folder: Path = None, train_frac: float = 0.7, IN_COLS = IN_COLS, DELTA_COLS = DELTA_COLS):
+    if base_folder is None:
+        base_folder = Path(__file__).parent.parent.parent / "data" / "Raw" / "processed"
     """
     Compute global mean/std for:
       - IN_COLS  = [Latitude, Longitude, SOG, COG]   (inputs)

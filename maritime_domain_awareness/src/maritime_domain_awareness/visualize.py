@@ -5,9 +5,9 @@ import numpy as np
 import pandas as pd
 from math import radians, cos, sin, sqrt, atan2
 import torch
-from .models import Load_model
-from .data import AISTrajectorySeq2Seq, load_and_split_data, compute_global_norm_stats
-from .PlotToWorldMap import PlotToWorldMap
+from models import Load_model
+from data import compute_global_norm_stats
+from PlotToWorldMap import PlotToWorldMap
 
 def haversine(lat1, lon1, lat2, lon2):
     """
@@ -278,7 +278,21 @@ def trajectory_prediction(
     plt.legend()
     plt.grid(True, alpha=0.3)
     plt.tight_layout()
-    plt.show()
+    # Don't call plt.show() to avoid blocking - let caller handle figure display/save
+    
+    # Also create world map visualization comparing predicted vs actual
+    # Convert to torch tensors in [N, 2] format (lat, lon)
+    actual_trajectory = torch.tensor(np.column_stack((true_lat, true_lon)), dtype=torch.float32)
+    predicted_trajectory = torch.tensor(np.column_stack((pred_lat, pred_lon)), dtype=torch.float32)
+    
+    # Create dictionary for multiple model predictions format
+    model_predictions = {
+        "Predicted": predicted_trajectory
+    }
+    model_names = ["Predicted"]
+    
+    # Plot on world map
+    PlotToWorldMap(actual_trajectory, model_predictions, model_names)
 
     return {
         "true_lat": true_lat,
@@ -301,11 +315,11 @@ if __name__ == "__main__":
     # ------ Load a trained model (example) ------
     # Parameters
     n_in = 4      # Latitude, Longitude, SOG, COG
-    n_out = 4     # predict dLatitude, dLongitude
-    n_hid = 128    # hidden size for RNN/LSTM/GRU/Transformer
+    n_out = 4     # predict dLatitude, dLongitude, dSOG, dCOG
+    n_hid = 256    # hidden size - must match the trained model (256 for GPU training)
     
     # Sequence length for training and rollout
-    seq_len = 20
+    seq_len = 50   # Changed to 50 to match training
 
     # load a model and evaluate on test data
     model_name = "transformer"
@@ -321,11 +335,12 @@ if __name__ == "__main__":
     
     # ------------------------------------------
     
-    # Trajectory_prediction function
-    #path = "data/Processed/MMSI=219002906/Segment=2/513774f9fb5b4cabba2085564bb84c5c-0.parquet"
-    #path = "data/Processed/MMSI=219001258/Segment=1/513774f9fb5b4cabba2085564bb84c5c-0.parquet"
-    #path = "data/Processed/MMSI=219001204/Segment=0/513774f9fb5b4cabba2085564bb84c5c-0.parquet"
-    path = "data/Processed/MMSI=219000617/Segment=11/513774f9fb5b4cabba2085564bb84c5c-0.parquet"
+    # Trajectory_prediction function - use absolute paths
+    data_base = Path(__file__).parent.parent.parent / "data" / "Raw" / "processed"
+    #path = data_base / "MMSI=219002906/Segment=2/513774f9fb5b4cabba2085564bb84c5c-0.parquet"
+    #path = data_base / "MMSI=219001258/Segment=1/513774f9fb5b4cabba2085564bb84c5c-0.parquet"
+    #path = data_base / "MMSI=219001204/Segment=0/513774f9fb5b4cabba2085564bb84c5c-0.parquet"
+    path = data_base / "MMSI=219000617/Segment=11/513774f9fb5b4cabba2085564bb84c5c-0.parquet"
     #path = "data/Processed/MMSI=219000617/Segment=25/513774f9fb5b4cabba2085564bb84c5c-0.parquet"
     #path = "data/Processed/MMSI=219005931/Segment=1/513774f9fb5b4cabba2085564bb84c5c-0.parquet"
     #path = "data/Processed/MMSI=219005941/Segment=0/513774f9fb5b4cabba2085564bb84c5c-0.parquet"
@@ -333,10 +348,8 @@ if __name__ == "__main__":
     df = pd.read_parquet(path)
     X_seq = torch.from_numpy(df[["Latitude", "Longitude", "SOG", "COG"]].to_numpy("float32"))
 
-    true_lat, true_lon, pred_lat, pred_lon, error_m = trajectory_prediction(model, X_seq, device, seq_len=20, future_steps=50, sog_cog_mode="predicted")
+    result = trajectory_prediction(model, X_seq, device, seq_len=seq_len, future_steps=50, sog_cog_mode="predicted")
+    print(f"Prediction complete. Error: {result['error_m']:.1f} meters")
     
-    
-    # Plot on world map
-    #actualPoint = [torch.tensor(np.vstack((true_lat, true_lon)).T)]
-    #predictedPoint = [torch.tensor(np.vstack((pred_lat, pred_lon)).T)]
-    PlotToWorldMap(actualPoint, predictedPoint)
+    # Show the matplotlib figure
+    plt.show()

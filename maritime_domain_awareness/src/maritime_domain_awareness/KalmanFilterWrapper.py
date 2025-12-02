@@ -1,5 +1,5 @@
 import torch
-from .models.KalmanFilter import KalmanFilter
+from models.KalmanFilter import KalmanFilter
 import numpy as np
 
 class KalmanFilterWrapper(torch.nn.Module):
