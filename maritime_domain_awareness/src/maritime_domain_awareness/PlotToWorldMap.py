@@ -30,4 +30,5 @@ def PlotToWorldMap(actualPoint=None, predictedPoint=None):
     ax.plot(actual_lons, actual_lats, 'o-', color='green', label='Actual', transform=ccrs.PlateCarree())
     ax.plot(predicted_lons, predicted_lats, 'x-', color='red', label='Predicted', transform=ccrs.PlateCarree())
     ax.legend()
-    plt.show()
+    plt.savefig("reports/plot.png")
+    #plt.show()

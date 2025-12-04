@@ -2,7 +2,7 @@
 #BSUB -J train
 #BSUB -o train%J.out
 #BSUB -e train%J.err
-#BSUB -q hpc
+#BSUB -q gpul40s
 #BSUB -W 24:00
 #BSUB -R "rusage[mem=512MB]"
 #BSUB -n 16
@@ -10,7 +10,7 @@
 
 
 cd $BLACKHOLE/Maritime_Domain_Awareness/
-git checkout Niklas_super_duper_gode_ide
+git checkout main
 git pull
 source dl/bin/activate
 cd maritime_domain_awareness/
