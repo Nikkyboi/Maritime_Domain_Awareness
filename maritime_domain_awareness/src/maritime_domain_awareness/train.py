@@ -1,8 +1,9 @@
 # Standard library imports
-import logging
 from pathlib import Path
 import random
 import copy
+import logging
+from typing import Optional
 
 # Third-party imports
 import matplotlib.pyplot as plt
@@ -31,8 +32,8 @@ def train(
     learning_rate: float = 1e-3,
     dynamic_epochs: bool = False,
     device: str | torch.device | None = None,
-    logger: logging.Logger | None = None,
-):
+   logger: Optional[logging.Logger] = None,
+   ):
     # Set device (Use GPU if available)
     if device is None:
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -135,7 +136,7 @@ def train(
                     y_last     = y_batch[-1]
 
                 
-                loss = criterion(preds, y_batch)
+                loss = criterion(preds, y_last)
                 
                 val_loss += loss.item()
                 val_batches += 1
@@ -236,7 +237,7 @@ if __name__ == "__main__":
     # Options: "rnn", "lstm", "gru", "transformer", "kalman"
     #model_name = "Transformer"
     #models = ["rnn", "lstm", "gru", "transformer"]
-    models = ["rnn"]
+    models = ["transformer"]
     
     for model_name in models:
         # Look for the existing model
@@ -252,7 +253,7 @@ if __name__ == "__main__":
         
         # Epochs and learning rate
         epochs = 200
-        lr = {"rnn": 1e-3, "lstm": 1e-3, "gru": 1e-3, "transformer": 1e-4}[model_name]
+        lr = {"rnn": 1e-3, "lstm": 1e-3, "gru": 1e-3, "transformer": 1e-3}[model_name]
         print(f"Using learning rate: {lr}")
         # -------------------------
         if Path(models).exists():
@@ -270,7 +271,7 @@ if __name__ == "__main__":
         
         training_sequences = []
         # Find all training sequences in the data folder
-        base_folder = Path("data/Processed/")
+        base_folder = Path(__file__).parent / "done44"  # Absolute path relative to train.py
         training_sequences = find_all_parquet_files(base_folder)
         print("Found training sequences:", len(training_sequences))
         
@@ -298,6 +299,16 @@ if __name__ == "__main__":
         print("Global input std:",  global_in_std)
         print("Global delta mean:", global_delta_mean)
         print("Global delta std:",  global_delta_std)
+
+        print("Global delta std:",  global_delta_std)
+        
+        import json
+        Path("models").mkdir(parents=True, exist_ok=True)
+        with open(f"models/norm_params_{model_name}.json", "w") as f:
+            json.dump({
+                "delta_mean": global_delta_mean.tolist(),
+                "delta_std": global_delta_std.tolist()
+            }, f)
         
         # ----------------------------
         # Training loop over all sequences
@@ -389,7 +400,8 @@ if __name__ == "__main__":
                 # Show under or overfitting
                 train_loss_total.extend(train_loss)
                 val_loss_total.extend(val_loss)
-    
+            if chunk_idx == 1:
+                break
         # ----------------------------
         # Save model
         torch.save(model.state_dict(), models)

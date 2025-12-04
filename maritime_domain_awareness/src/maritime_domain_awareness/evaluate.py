@@ -2,6 +2,8 @@ import torch
 import matplotlib.pyplot as plt
 import torch.nn as nn
 from pathlib import Path
+import json
+import numpy as np
 from .models import Load_model
 
 def evaluate_model_on_sequence(model, test_loader, device):
@@ -36,16 +38,23 @@ def evaluate_model_on_sequence(model, test_loader, device):
             outputs = model(inputs_for_model)
 
             # Normalize outputs to [B, T, F]
-            if outputs.dim() == 3:
+           if outputs.dim() == 3:
                 if getattr(model, 'batch_first', False) is False:
-                    outputs = outputs.transpose(0, 1)      # [B, T, F]
+                    outputs = outputs.transpose(0, 1)
             elif outputs.dim() == 2:
-                outputs = outputs.unsqueeze(1)             # [B, 1, F]
+                outputs = outputs.unsqueeze(1)
 
             if raw_targets.dim() == 2:
-                raw_targets = raw_targets.unsqueeze(1)      # [B, 1, F]
+                raw_targets = raw_targets.unsqueeze(1)
 
-            loss = criterion(outputs, raw_targets)
+            if outputs.shape[1] > 1:  
+                outputs_last = outputs[:, -1, :]      # [B, F]
+                targets_last = raw_targets[:, -1, :]  # [B, F]
+            else:
+                outputs_last = outputs.squeeze(1)
+                targets_last = raw_targets.squeeze(1)
+
+            loss = criterion(outputs_last, targets_last)  
             total_loss += loss.item()
             num_batches += 1
 
@@ -69,12 +78,36 @@ def evaluate_model(model : nn.Module, tests_to_run : list, device : torch.device
 
     tests_to_run: list of (seq_path, test_loader) tuples
     """
+    norm_path = f"models/norm_params_{name}.json"
+    if Path(norm_path).exists():
+        with open(norm_path) as f:
+            norm = json.load(f)
+        delta_std = np.array(norm["delta_std"])
+    else:
+        print(f"Warning: {norm_path} not found, showing normalized errors only")
+        delta_std = None
+    
     all_test_losses = []
+    all_position_errors = []
 
     for seq, test_loader in tests_to_run:
         print(f"Evaluating on test set for sequence: {seq}")
-        _, _, avg_loss = evaluate_model_on_sequence(model, test_loader, device)
+        pred, actual, avg_loss = evaluate_model_on_sequence(model, test_loader, device)
         all_test_losses.append(avg_loss)
+        
+        if delta_std is not None:
+            pred_np = pred.numpy()
+            actual_np = actual.numpy()
+            
+            error = pred_np - actual_np
+            dlat_error = error[..., 0] * delta_std[0]
+            dlon_error = error[..., 1] * delta_std[1]
+            
+            lat_error_m = dlat_error * 111000
+            lon_error_m = dlon_error * 111000 * np.cos(np.radians(56.0))
+            
+            position_error_m = np.sqrt(lat_error_m**2 + lon_error_m**2)
+            all_position_errors.append(position_error_m.mean())
 
     plt.figure()
     plt.plot(all_test_losses, marker="o")
@@ -86,8 +119,8 @@ def evaluate_model(model : nn.Module, tests_to_run : list, device : torch.device
     plt.close()
     #plt.show()
 
-    global_avg = sum(all_test_losses) / len(all_test_losses)
-    print(f"Global average test loss over {len(all_test_losses)} sequences: {global_avg:.6f}")
+    print(f"\nGlobal average test loss (normalized MSE): {np.mean(all_test_losses):.6f}")
+    print(f"Average position error: {np.mean(all_position_errors):.1f} meters")
 
 if __name__ == "__main__":
     # Parameters
