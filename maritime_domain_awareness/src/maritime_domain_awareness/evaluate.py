@@ -38,7 +38,7 @@ def evaluate_model_on_sequence(model, test_loader, device):
             outputs = model(inputs_for_model)
 
             # Normalize outputs to [B, T, F]
-           if outputs.dim() == 3:
+            if outputs.dim() == 3:
                 if getattr(model, 'batch_first', False) is False:
                     outputs = outputs.transpose(0, 1)
             elif outputs.dim() == 2:

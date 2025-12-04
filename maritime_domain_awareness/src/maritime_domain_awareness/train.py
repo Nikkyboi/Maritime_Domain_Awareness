@@ -136,7 +136,7 @@ def train(
                     y_last     = y_batch[-1]
 
                 
-                loss = criterion(preds, y_last)
+                loss = criterion(preds_last, y_last)
                 
                 val_loss += loss.item()
                 val_batches += 1
@@ -149,11 +149,6 @@ def train(
             f"Train Loss: {avg_train_loss:.8f}, "
             f"Val Loss: {avg_val_loss:.8f}"
         )
-        #print(
-        #    f"Epoch {epoch+1}/{max_epochs}, "
-        #    f"Train Loss: {avg_train_loss:.8f}, "
-        #    f"Val Loss: {avg_val_loss:.8f}"
-        #)
         
         # ----------------------
         # Early stopping logic
@@ -236,8 +231,8 @@ if __name__ == "__main__":
     # Choose the name of the model to train
     # Options: "rnn", "lstm", "gru", "transformer", "kalman"
     #model_name = "Transformer"
-    #models = ["rnn", "lstm", "gru", "transformer"]
-    models = ["transformer"]
+    models = ["rnn", "lstm", "gru", "transformer"]
+    #models = ["transformer"]
     
     for model_name in models:
         # Look for the existing model
@@ -271,7 +266,7 @@ if __name__ == "__main__":
         
         training_sequences = []
         # Find all training sequences in the data folder
-        base_folder = Path(__file__).parent / "done44"  # Absolute path relative to train.py
+        base_folder = Path("data/Processed/")
         training_sequences = find_all_parquet_files(base_folder)
         logger.info(f"Found training sequences:{len(training_sequences)}")
         
@@ -406,7 +401,7 @@ if __name__ == "__main__":
             plt.xlabel("Epoch")
             plt.ylabel("Loss")
             plt.legend()
-            plt.title("reports/Training and Validation Loss")
+            plt.title("Training and Validation Loss for " + model_name)
             plt.savefig("reports/training_validation_loss_" + model_name + ".png")
             plt.close()
             # ----------------------------
