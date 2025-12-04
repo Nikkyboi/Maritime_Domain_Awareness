@@ -37,6 +37,7 @@ def trajectory_prediction(
     seq_len: int = 50,    # context window length
     future_steps: int = 50,    # how many steps to predict ahead
     sog_cog_mode: str = "predicted",  # "predicted", "true", or "constant"
+    model_name: str = "",
 ):
     """
     Perform an autoregressive rollout over a full AIS sequence.
@@ -278,7 +279,8 @@ def trajectory_prediction(
     plt.legend()
     plt.grid(True, alpha=0.3)
     plt.tight_layout()
-    plt.show()
+    plt.savefig("reports/plot_" + model_name + "2.png")
+    #plt.show()
 
     return {
         "true_lat": true_lat,
@@ -302,13 +304,13 @@ if __name__ == "__main__":
     # Parameters
     n_in = 4      # Latitude, Longitude, SOG, COG
     n_out = 4     # predict dLatitude, dLongitude
-    n_hid = 128    # hidden size for RNN/LSTM/GRU/Transformer
+    n_hid = 256    # hidden size for RNN/LSTM/GRU/Transformer
     
     # Sequence length for training and rollout
-    seq_len = 20
+    seq_len = 50
 
     # load a model and evaluate on test data
-    model_name = "transformer"
+    model_name = "rnn"
     model_path = "models/ais_" + model_name + "_model.pth"
     if Path(model_path).exists():
         print("Loading existing model:")
@@ -333,10 +335,9 @@ if __name__ == "__main__":
     df = pd.read_parquet(path)
     X_seq = torch.from_numpy(df[["Latitude", "Longitude", "SOG", "COG"]].to_numpy("float32"))
 
-    true_lat, true_lon, pred_lat, pred_lon, error_m = trajectory_prediction(model, X_seq, device, seq_len=20, future_steps=50, sog_cog_mode="predicted")
-    
+    true_lat, true_lon, pred_lat, pred_lon, error_m = trajectory_prediction(model, X_seq, device, seq_len=50, future_steps=50, sog_cog_mode="predicted",model_name=model_name)
     
     # Plot on world map
     #actualPoint = [torch.tensor(np.vstack((true_lat, true_lon)).T)]
     #predictedPoint = [torch.tensor(np.vstack((pred_lat, pred_lon)).T)]
-    PlotToWorldMap(actualPoint, predictedPoint)
+    #PlotToWorldMap([true_lat,true_lon], [pred_lat,pred_lon])

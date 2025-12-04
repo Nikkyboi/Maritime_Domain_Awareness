@@ -39,7 +39,104 @@ class AISTrajectorySeq2Seq(Dataset):
         y_seq = self.y[idx + 1 : idx + 1 + self.seq_len]          # [T, 4] deltas
         return x_seq, y_seq
     
+
+def load_and_split_data(
+    input_files: str | Path,
+    train_frac: float = 0.7,
+    val_frac: float = 0.15,
+    in_mean = None,
+    in_std = None,
+    delta_mean = None,
+    delta_std = None,
+    logger = None,
+):
+    """
+    Load and split the dataset into train, validation, and test sets.
+    """
+
+    if isinstance(input_files, (str, Path)):
+        input_files = [input_files]
+
+    dfs = []
+    for f in input_files:
+        f = Path(f)
+        if f.suffix == ".csv":
+            df = pd.read_csv(f)
+        elif f.suffix == ".parquet":
+            df = pd.read_parquet(f)
+        else:
+            raise ValueError(f"Unsupported file format: {f.suffix}")
+
+        # ---- compute deltas per file (reset at each file) ----
+        df["dLatitude"]  = df["Latitude"].diff().fillna(0.0)
+        df["dLongitude"] = df["Longitude"].diff().fillna(0.0)
+        df["dSOG"]       = df["SOG"].diff().fillna(0.0)
+
+        def circular_diff_deg(a_next, a_prev):
+            diff = (a_next - a_prev + 180) % 360 - 180
+            return diff
+
+        df["dCOG"] = circular_diff_deg(df["COG"], df["COG"].shift(1)).fillna(0.0)
+
+        dfs.append(df)
+
+    # Now concat after deltas have been computed per file
+    df = pd.concat(dfs, ignore_index=True)
+
+    in_cols  = ["Latitude", "Longitude", "SOG", "COG"]
+    out_cols = ["dLatitude", "dLongitude", "dSOG", "dCOG"]
     
+    N = len(df)
+    train_end = int(train_frac * N)
+    val_end   = int((train_frac + val_frac) * N)
+
+    # ----- normalization -----
+    if in_mean is None or in_std is None or delta_mean is None or delta_std is None:
+        raise ValueError("in_mean, in_std, delta_mean, delta_std must be provided for normalization.")
+
+    # Inputs
+    mean_in = pd.Series(in_mean, index=in_cols)
+    std_in  = pd.Series(in_std,  index=in_cols)
+
+    # Deltas
+    mean_delta = pd.Series(delta_mean, index=out_cols)
+    std_delta  = pd.Series(delta_std,  index=out_cols)
+
+    df_X = (df[in_cols]    - mean_in)   / std_in
+    df_y = (df[out_cols]   - mean_delta) / std_delta
+
+    # chronological splits (no shuffling)
+    df_train_X = df_X.iloc[:train_end]
+    df_val_X   = df_X.iloc[train_end:val_end]
+    df_test_X  = df_X.iloc[val_end:]
+
+    df_train_y = df_y.iloc[:train_end]
+    df_val_y   = df_y.iloc[train_end:val_end]
+    df_test_y  = df_y.iloc[val_end:]
+
+    logger.info(f"N={N} -> train={len(df_train_X)}, val={len(df_val_X)}, test={len(df_test_X)}")
+
+    X_train = df_train_X.to_numpy(dtype="float32")
+    y_train = df_train_y.to_numpy(dtype="float32")
+
+    X_val   = df_val_X.to_numpy(dtype="float32")
+    y_val   = df_val_y.to_numpy(dtype="float32")
+
+    X_test  = df_test_X.to_numpy(dtype="float32")
+    y_test  = df_test_y.to_numpy(dtype="float32")
+
+    # Convert to torch tensors
+    X_train_t = torch.from_numpy(X_train)
+    y_train_t = torch.from_numpy(y_train)
+    X_val_t   = torch.from_numpy(X_val)
+    y_val_t   = torch.from_numpy(y_val)
+    X_test_t  = torch.from_numpy(X_test)
+    y_test_t  = torch.from_numpy(y_test)
+
+    return (X_train_t, y_train_t), (X_val_t, y_val_t), (X_test_t, y_test_t)
+
+
+'''
 def load_and_split_data(
     input_files: str | Path,
     train_frac: float = 0.7,
@@ -138,7 +235,7 @@ def load_and_split_data(
     y_test_t  = torch.from_numpy(y_test)
 
     return (X_train_t, y_train_t), (X_val_t, y_val_t), (X_test_t, y_test_t)
-
+'''
 # Global column definitions
 IN_COLS = ["Latitude", "Longitude", "SOG", "COG"]
 #DELTA_COLS = ["dLatitude", "dLongitude"]

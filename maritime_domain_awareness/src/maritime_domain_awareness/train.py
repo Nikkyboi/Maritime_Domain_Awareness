@@ -36,7 +36,7 @@ def train(
     # Set device (Use GPU if available)
     if device is None:
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    
+    logger.info(f"{device}")
     model.to(device)
     
     # Loss function and optimizer
@@ -166,7 +166,7 @@ def train(
             else:
                 epochs_no_improve += 1
                 if epochs_no_improve >= patience:
-                    print(
+                    logger.info(
                         f"Early stopping at epoch {epoch+1} "
                         f"(no val improvement for {patience} epochs)."
                     )
@@ -211,7 +211,6 @@ if __name__ == "__main__":
     # Simple logging setup
     logger = logging.getLogger("ais_training")
     logger.setLevel(logging.INFO)
-
     # Avoid adding handlers twice if this file is imported
     if not logger.handlers:
         # Log to stdout (so you see it in HPC job output)
@@ -231,12 +230,13 @@ if __name__ == "__main__":
         logger.addHandler(console_handler)
         logger.addHandler(file_handler)
 
+    logger.info(f"{device}")
     # --------------------------
     # Choose the name of the model to train
     # Options: "rnn", "lstm", "gru", "transformer", "kalman"
     #model_name = "Transformer"
     #models = ["rnn", "lstm", "gru", "transformer"]
-    models = ["rnn"]
+    models = ["transformer"]
     
     for model_name in models:
         # Look for the existing model
@@ -252,17 +252,17 @@ if __name__ == "__main__":
         
         # Epochs and learning rate
         epochs = 200
-        lr = {"rnn": 1e-3, "lstm": 1e-3, "gru": 1e-3, "transformer": 1e-4}[model_name]
-        print(f"Using learning rate: {lr}")
+        lr = {"rnn": 1e-5, "lstm": 1e-5, "gru": 1e-5, "transformer": 1e-3}[model_name]
+        logger.info(f"Using learning rate: {lr}")
         # -------------------------
         if Path(models).exists():
-            print("Loading existing model:")
+            logger.info("Loading existing model:")
             model = Load_model.load_model(model_name, n_in, n_out, n_hid)
             model.load_state_dict(torch.load(models))
         elif models == "kalman":
-            print("Using Kalman Filter model...")
+            logger.info("Using Kalman Filter model...")
         else:
-            print("Training new model...")
+            logger.info("Training new model...")
             model = Load_model.load_model(model_name, n_in, n_out, n_hid)
 
         # ----------------------------
@@ -272,7 +272,7 @@ if __name__ == "__main__":
         # Find all training sequences in the data folder
         base_folder = Path("data/Processed/")
         training_sequences = find_all_parquet_files(base_folder)
-        print("Found training sequences:", len(training_sequences))
+        logger.info(f"Found training sequences:{len(training_sequences)}")
         
         def split_into_n_chunks(seq_list, n_chunks):
             """Split seq_list into n_chunks parts as evenly as possible."""
@@ -284,7 +284,7 @@ if __name__ == "__main__":
             ]
 
         # Split training sequences into 8 chunks
-        chunks = split_into_n_chunks(training_sequences, 60)
+        chunks = split_into_n_chunks(training_sequences, 1)
         
         # ----------------------------
         # Compute global normalization stats
@@ -294,10 +294,10 @@ if __name__ == "__main__":
             IN_COLS = ["Latitude", "Longitude", "SOG", "COG"],
             DELTA_COLS = ["dLatitude", "dLongitude", "dSOG", "dCOG"],
         )
-        print("Global input mean:", global_in_mean)
-        print("Global input std:",  global_in_std)
-        print("Global delta mean:", global_delta_mean)
-        print("Global delta std:",  global_delta_std)
+        logger.info(f"Global input mean:{global_in_mean}")
+        logger.info(f"Global input std:{global_in_std}")
+        logger.info(f"Global delta mean:{global_delta_mean}")
+        logger.info(f"Global delta std:{global_delta_std}")
         
         # ----------------------------
         # Training loop over all sequences
@@ -308,7 +308,7 @@ if __name__ == "__main__":
         
         tests_to_run = []
 
-        # Split the training_sequences into 5 equal sequences
+        # Split the training_sequences into k equal sequences
         
         # ----------------------------
         # For each training sequence file, train the model
@@ -327,27 +327,14 @@ if __name__ == "__main__":
                 in_std=global_in_std,
                 delta_mean=global_delta_mean,
                 delta_std=global_delta_std,
+                logger = logger,
             )
-            print("X_train.shape:", train_X.shape)
-            print("y_train.shape:", train_y.shape)
+            logger.info(f"X_train.shape:{train_X.shape}")
+            logger.info(f"y_train.shape:{train_y.shape}")
 
             # Choose sequence length (number of timesteps per sample)
             seq_len = 50
         
-            """
-            # Check if we have enough data for at least one sequence
-            # We need at least seq_len + 1 samples
-            if len(train_X) <= seq_len + 1:
-                print(f"Skipping sequence {seq}: Train set too small ({len(train_X)} <= {seq_len + 1})")
-                continue
-            
-            if len(val_X) <= seq_len + 1:
-                # If validation is too small, we can either skip validation or skip the whole file.
-                # Usually better to skip the file to avoid errors in val_loader
-                print(f"Skipping sequence {seq}: Val set too small ({len(val_X)} <= {seq_len + 1})")
-                continue
-            """
-
             # Create datasets and dataloaders
             train_dataset = AISTrajectorySeq2Seq(train_X, train_y, seq_len)
             val_dataset   = AISTrajectorySeq2Seq(val_X,   val_y,   seq_len)

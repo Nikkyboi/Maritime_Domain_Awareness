@@ -66,7 +66,7 @@ def load_model(model_path: str, n_in : int, n_out : int, n_hid : int = 64) -> ob
         num_layers=3,
         n_heads=4,
         dim_feedforward=4 * n_hid, # standard transformer: 4*d_model
-        dropout=0.1,
+        dropout=0.2,
         batch_first=False,
     )
         
