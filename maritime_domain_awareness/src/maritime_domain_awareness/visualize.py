@@ -39,6 +39,7 @@ def trajectory_prediction(
     seq_len: int = 50,    # context window length
     future_steps: int = 50,    # how many steps to predict ahead
     sog_cog_mode: str = "predicted",  # "predicted", "true", or "constant"
+    model_name: str = "",
 ):
     """
     Perform an autoregressive rollout over a full AIS sequence.
@@ -280,7 +281,8 @@ def trajectory_prediction(
     plt.legend()
     plt.grid(True, alpha=0.3)
     plt.tight_layout()
-    plt.show()
+    plt.savefig("reports/plot_" + model_name + "2.png")
+    #plt.show()
 
     return {
         "true_lat": true_lat,
@@ -304,6 +306,7 @@ if __name__ == "__main__":
     # Parameters
     n_in = 4      # Latitude, Longitude, SOG, COG
     n_out = 4     # predict dLatitude, dLongitude
+    n_hid = 256    # hidden size for RNN/LSTM/GRU/Transformer
     n_hid = 256    # hidden size for RNN/LSTM/GRU/Transformer
     
     # Sequence length for training and rollout
