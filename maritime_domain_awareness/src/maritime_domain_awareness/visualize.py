@@ -5,11 +5,12 @@ import numpy as np
 import pandas as pd
 from math import radians, cos, sin, sqrt, atan2
 import torch
-
+from data import find_all_parquet_files
 from CompareModels import compare_models
 from KalmanTrajectoryPrediction import kalman_trajectory_prediction
 from models import Load_model
 from data import AISTrajectorySeq2Seq, load_and_split_data, compute_global_norm_stats
+import pandas as pd
 
 def haversine(lat1, lon1, lat2, lon2):
     """
@@ -40,6 +41,8 @@ def trajectory_prediction(
     future_steps: int = 50,    # how many steps to predict ahead
     sog_cog_mode: str = "predicted",  # "predicted", "true", or "constant"
     model_name: str = "",
+    save_plot: bool = True,   # whether to generate and save the plot
+    norm_stats: tuple = None,  # optional pre-computed (in_mean, in_std, delta_mean, delta_std)
 ):
     """
     Perform an autoregressive rollout over a full AIS sequence.
@@ -64,6 +67,10 @@ def trajectory_prediction(
         "predicted" : use the model's dSOG, dCOG to update SOG/COG autoregressively.
         "true"      : keep the TRUE future SOG/COG from the AIS data (cheating).
         "constant"  : keep SOG/COG fixed at the last true value before predicting future values.
+    
+    norm_stats:
+        Optional tuple of (in_mean, in_std, delta_mean, delta_std) to avoid recomputing.
+        If None, will call compute_global_norm_stats() (slower).
     """
     model.to(device)
     model.eval()
@@ -80,7 +87,10 @@ def trajectory_prediction(
         )
 
     # ----- extract normalization stats -----
-    in_mean, in_std, delta_mean, delta_std = compute_global_norm_stats()
+    if norm_stats is not None:
+        in_mean, in_std, delta_mean, delta_std = norm_stats
+    else:
+        in_mean, in_std, delta_mean, delta_std = compute_global_norm_stats()
     in_mean_np = np.asarray(in_mean, dtype=np.float32)   # [4]
     in_std_np  = np.asarray(in_std,  dtype=np.float32)   # [4]
 
@@ -232,57 +242,58 @@ def trajectory_prediction(
     true_lon_past = true_lon_full[past_start:past_end + 1]
 
     # ----- plot -----
-    plt.figure(figsize=(7, 7))
-    plt.plot(true_lon_past, true_lat_past, label=f"Previous Trajectory ({seq_len} steps)", linewidth=1, color="blue", alpha=0.5)
-    plt.plot(true_lon, true_lat, label=f"True: {future_steps} steps", linewidth=2)
-    plt.plot(pred_lon, pred_lat, label=f"Predicted: {future_steps} steps", linewidth=2)
+    if save_plot:
+        plt.figure(figsize=(7, 7))
+        plt.plot(true_lon_past, true_lat_past, label=f"Previous Trajectory ({seq_len} steps)", linewidth=1, color="blue", alpha=0.5)
+        plt.plot(true_lon, true_lat, label=f"True: {future_steps} steps", linewidth=2)
+        plt.plot(pred_lon, pred_lat, label=f"Predicted: {future_steps} steps", linewidth=2)
 
-    # Start marker: base point (where we start predicting from)
-    plt.scatter(true_lon[0], true_lat[0],
-                marker="o", color="green", s=80, label="Start")
+        # Start marker: base point (where we start predicting from)
+        plt.scatter(true_lon[0], true_lat[0],
+                    marker="o", color="green", s=80, label="Start")
 
-    # Final markers
-    plt.scatter(true_lon[-1], true_lat[-1],
-                marker="x", color="blue",  s=80, label="End (True)")
-    plt.scatter(pred_lon[-1], pred_lat[-1],
-                marker="x", color="red",   s=80, label="End (Predicted)")
+        # Final markers
+        plt.scatter(true_lon[-1], true_lat[-1],
+                    marker="x", color="blue",  s=80, label="End (True)")
+        plt.scatter(pred_lon[-1], pred_lat[-1],
+                    marker="x", color="red",   s=80, label="End (Predicted)")
 
-    # Line between true end and predicted end
-    plt.plot(
-        [true_lon[-1], pred_lon[-1]],
-        [true_lat[-1], pred_lat[-1]],
-        color="purple", linestyle="--", linewidth=1.5, label="Final error"
-    )
+        # Line between true end and predicted end
+        plt.plot(
+            [true_lon[-1], pred_lon[-1]],
+            [true_lat[-1], pred_lat[-1]],
+            color="purple", linestyle="--", linewidth=1.5, label="Final error"
+        )
 
-    # Distance label next to line
-    mid_lon = (true_lon[-1] + pred_lon[-1]) / 2
-    mid_lat = (true_lat[-1] + pred_lat[-1]) / 2
+        # Distance label next to line
+        mid_lon = (true_lon[-1] + pred_lon[-1]) / 2
+        mid_lat = (true_lat[-1] + pred_lat[-1]) / 2
 
-    plt.text(
-        mid_lon,
-        mid_lat,
-        f"{error_m:.1f} m",
-        ha="center",
-        va="bottom",
-        fontsize=10,
-        color="purple",
-        bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="purple", alpha=0.8),
-    )
+        plt.text(
+            mid_lon,
+            mid_lat,
+            f"{error_m:.1f} m",
+            ha="center",
+            va="bottom",
+            fontsize=10,
+            color="purple",
+            bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="purple", alpha=0.8),
+        )
 
-    dt_minutes = 1  # adjust if AIS sampling is not 1 minute
-    future_minutes = future_steps * dt_minutes
+        dt_minutes = 1  # adjust if AIS sampling is not 1 minute
+        future_minutes = future_steps * dt_minutes
 
-    plt.xlabel("Longitude")
-    plt.ylabel("Latitude")
-    plt.title(
-        f"Predicting {future_steps} steps from last known point "
-        f"(error = {error_m:.1f} m, steps = {future_minutes} min)"
-    )
-    plt.legend()
-    plt.grid(True, alpha=0.3)
-    plt.tight_layout()
-    plt.savefig("reports/plot_" + model_name + "2.png")
-    #plt.show()
+        plt.xlabel("Longitude")
+        plt.ylabel("Latitude")
+        plt.title(
+            f"Predicting {future_steps} steps from last known point "
+            f"(error = {error_m:.1f} m, steps = {future_minutes} min)"
+        )
+        plt.legend()
+        plt.grid(True, alpha=0.3)
+        plt.tight_layout()
+        plt.savefig("reports/plot_" + model_name + "2.png")
+        #plt.show()
 
     return {
         "true_lat": true_lat,
@@ -293,8 +304,11 @@ def trajectory_prediction(
     }
 
 
-
 if __name__ == "__main__":
+    
+  
+    COMPUTE_TEST_SET_ERROR = True
+    
     # Example usage of haversine function
     lat1, lon1 = 52.2296756, 21.0122287  # Warsaw
     lat2, lon2 = 41.8919300, 12.5113300  # Rome
@@ -322,7 +336,7 @@ if __name__ == "__main__":
         if Path(model_path).exists():
             try:
                 model = Load_model.load_model(model_type, n_in, n_out, n_hid)
-                model.load_state_dict(torch.load(model_path))
+                model.load_state_dict(torch.load(model_path, map_location=device))
                 loaded_models[model_type] = model
                 print(f"✓ {model_type.upper()} loaded")
             except Exception as e:
@@ -332,65 +346,148 @@ if __name__ == "__main__":
     
     # ------------------------------------------
     
-    # Trajectory_prediction function
-    #path = "maritime_domain_awareness/data/Raw/processed/MMSI=219002906/Segment=2/513774f9fb5b4cabba2085564bb84c5c-0.parquet"
-    #path = "maritime_domain_awareness/data/Raw/processed/MMSI=219001258/Segment=1/513774f9fb5b4cabba2085564bb84c5c-0.parquet"
-    #path = "maritime_domain_awareness/data/Raw/processed/MMSI=219001204/Segment=0/513774f9fb5b4cabba2085564bb84c5c-0.parquet"
-    path = "maritime_domain_awareness/data/Raw/processed/MMSI=219000617/Segment=11/513774f9fb5b4cabba2085564bb84c5c-0.parquet"
-    #path = "maritime_domain_awareness/data/Raw/processed/MMSI=219000617/Segment=25/513774f9fb5b4cabba2085564bb84c5c-0.parquet"
-    #path = "maritime_domain_awareness/data/Raw/processed/MMSI=219005931/Segment=1/513774f9fb5b4cabba2085564bb84c5c-0.parquet"
-    #path = "maritime_domain_awareness/data/Raw/processed/MMSI=219005941/Segment=0/513774f9fb5b4cabba2085564bb84c5c-0.parquet"
+    if COMPUTE_TEST_SET_ERROR:
+       
+      
+        
+        if "transformer" not in loaded_models:
+            print("✗ Transformer model not loaded. Cannot compute test set error.")
+        else:
+            model = loaded_models["transformer"]
+            
+            base_folder = Path("maritime_domain_awareness/src/maritime_domain_awareness/done44")
+            
+            all_files = find_all_parquet_files(base_folder)
+            print(f"Found {len(all_files)} parquet files")
+            
+            test_sequences = []
+            min_seq_length = seq_len + 50 
+            
+            files_used = 0
+            for file_path in all_files:
+                df = pd.read_parquet(file_path)
+                in_cols = ["Latitude", "Longitude", "SOG", "COG"]
+                X_raw = torch.from_numpy(df[in_cols].to_numpy("float32"))
+                
+                N = len(X_raw)
+                if N < min_seq_length:
+                    continue  
+                
+                val_end = int(0.85 * N)
+                X_test_raw = X_raw[val_end:] 
+                
+          
+                i = 0
+                sequences_from_file = 0
+                while i + min_seq_length <= len(X_test_raw):
+                    seq = X_test_raw[i:i + min_seq_length]
+                    test_sequences.append(seq)
+                    i += min_seq_length  
+                    sequences_from_file += 1
+                
+                if sequences_from_file > 0:
+                    files_used += 1
+            
+            print(f"Created {len(test_sequences)} test sequences from {files_used} files")
+            
+            future_steps = 50
+            
+            norm_stats = compute_global_norm_stats()
+            
+            all_errors = []
+            for idx, seq in enumerate(test_sequences):
+                if (idx + 1) % 10 == 0:
+                    print(f"Processing sequence {idx + 1}/{len(test_sequences)}...")
+                
+                result = trajectory_prediction(
+                    model=model,
+                    X_seq_raw=seq,
+                    device=device,
+                    seq_len=seq_len,
+                    future_steps=future_steps,
+                    sog_cog_mode="predicted",
+                    model_name="",
+                    save_plot=False,  
+                    norm_stats=norm_stats, 
+                )
+                all_errors.append(result["error_m"])
+            
+            all_errors = np.array(all_errors)
+            results = {
+                "mean_error_m": np.mean(all_errors),
+                "std_error_m": np.std(all_errors),
+                "all_errors_m": all_errors,
+                "num_sequences": len(all_errors),
+            }
+            
+           
+            print(f"Mean error: {results['mean_error_m']:.1f} meters")
+            print(f"Std error: {results['std_error_m']:.1f} meters")
+            print(f"Min error: {results['all_errors_m'].min():.1f} meters")
+            print(f"Max error: {results['all_errors_m'].max():.1f} meters")
+            print(f"Median error: {np.median(results['all_errors_m']):.1f} meters")
     
-    df = pd.read_parquet(path)
-    X_seq = torch.from_numpy(df[["Latitude", "Longitude", "SOG", "COG"]].to_numpy("float32"))
-
-    models_to_compare = []
-
-    # Add all loaded neural network models with different colors
-    model_colors = {
-        "transformer": "orange",
-        "gru": "red",
-        "lstm": "purple",
-        "rnn": "brown"
-    }
-
-    for model_type, model in loaded_models.items():
-        models_to_compare.append({
-            "name": model_type.upper(),
-            "predictor": lambda X, m=model, **kw: trajectory_prediction(m, X, device, **kw),
-            "kwargs": {"sog_cog_mode": "predicted"},
-            "color": model_colors[model_type]
-        })
-    # Add Kalman filter
-    models_to_compare.append({
-        "name": "Kalman Filter",
-        "predictor": kalman_trajectory_prediction,
-        "kwargs": {"haversine": haversine},
-        "color": "green"
-    })
-
-    # EXAMPLE: Add more models here if you want
-    # models_to_compare.append({
-    #     "name": "LSTM",
-    #     "predictor": lstm_trajectory_prediction,  # your function
-    #     "kwargs": {},
-    #     "color": "red"
-    # })
-
-    # Run comparison
-    if len(models_to_compare) > 0:
-        results = compare_models(X_seq, models_to_compare, seq_len=seq_len, future_steps=50, device=device)
-
-        # Print summary
-        print("\n" + "="*50)
-        print("SUMMARY OF RESULTS")
-        print("="*50)
-        for model_name, model_data in results.items():
-            error = model_data["result"]["error_m"]
-            print(f"{model_name:20s}: {error:8.1f} meters")
-        print("="*50)
-
-        # Show all plots
-        plt.show()
     else:
-        print("No models available to compare. Please train a model first.")
+        
+        # Trajectory_prediction function
+        #path = "maritime_domain_awareness/data/Raw/processed/MMSI=219002906/Segment=2/513774f9fb5b4cabba2085564bb84c5c-0.parquet"
+        #path = "maritime_domain_awareness/data/Raw/processed/MMSI=219001258/Segment=1/513774f9fb5b4cabba2085564bb84c5c-0.parquet"
+        #path = "maritime_domain_awareness/data/Raw/processed/MMSI=219001204/Segment=0/513774f9fb5b4cabba2085564bb84c5c-0.parquet"
+        path = "maritime_domain_awareness/data/Raw/processed/MMSI=219000617/Segment=11/513774f9fb5b4cabba2085564bb84c5c-0.parquet"
+        #path = "maritime_domain_awareness/data/Raw/processed/MMSI=219000617/Segment=25/513774f9fb5b4cabba2085564bb84c5c-0.parquet"
+        #path = "maritime_domain_awareness/data/Raw/processed/MMSI=219005931/Segment=1/513774f9fb5b4cabba2085564bb84c5c-0.parquet"
+        #path = "maritime_domain_awareness/data/Raw/processed/MMSI=219005941/Segment=0/513774f9fb5b4cabba2085564bb84c5c-0.parquet"
+        
+        df = pd.read_parquet(path)
+        X_seq = torch.from_numpy(df[["Latitude", "Longitude", "SOG", "COG"]].to_numpy("float32"))
+
+        models_to_compare = []
+
+        # Add all loaded neural network models with different colors
+        model_colors = {
+            "transformer": "orange",
+            "gru": "red",
+            "lstm": "purple",
+            "rnn": "brown"
+        }
+
+        for model_type, model in loaded_models.items():
+            models_to_compare.append({
+                "name": model_type.upper(),
+                "predictor": lambda X, m=model, **kw: trajectory_prediction(m, X, device, **kw),
+                "kwargs": {"sog_cog_mode": "predicted"},
+                "color": model_colors[model_type]
+            })
+        # Add Kalman filter
+        models_to_compare.append({
+            "name": "Kalman Filter",
+            "predictor": kalman_trajectory_prediction,
+            "kwargs": {"haversine": haversine},
+            "color": "green"
+        })
+
+        # EXAMPLE: Add more models here if you want
+        # models_to_compare.append({
+        #     "name": "LSTM",
+        #     "predictor": lstm_trajectory_prediction,  # your function
+        #     "kwargs": {},
+        #     "color": "red"
+        # })
+
+        # Run comparison
+        if len(models_to_compare) > 0:
+            results = compare_models(X_seq, models_to_compare, seq_len=seq_len, future_steps=50, device=device)
+
+            # Print summary
+            print("\n" + "="*50)
+            print("SUMMARY OF RESULTS")
+            print("="*50)
+            for model_name, model_data in results.items():
+                error = model_data["result"]["error_m"]
+                print(f"{model_name:20s}: {error:8.1f} meters")
+            print("="*50)
+
+            # Show all plots
+            plt.show()
+        else:
+            print("No models available to compare. Please train a model first.")
