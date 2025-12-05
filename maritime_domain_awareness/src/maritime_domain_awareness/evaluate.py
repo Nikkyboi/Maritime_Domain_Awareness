@@ -117,7 +117,6 @@ def evaluate_model(model : nn.Module, tests_to_run : list, device : torch.device
     plt.tight_layout()
     plt.savefig("reports/test_loss_per_sequence_" + name + ".png")
     plt.close()
-    #plt.show()
 
     print(f"\nGlobal average test loss (normalized MSE): {np.mean(all_test_losses):.6f}")
     print(f"Average position error: {np.mean(all_position_errors):.1f} meters")
