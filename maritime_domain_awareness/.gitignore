@@ -1,10 +1,10 @@
 # The data, as it is too large for github
 data/Raw/aisdk-2025-*
-data/Processed/*
+# data/Processed/*
 
 docs/site/
 
-*.parquet
+# *.parquet
 *.csv 
 # test cache
 manual_test/
@@ -20,7 +20,7 @@ reports/*
 
 # data files
 data/Raw/
-data/Processed/
+# data/Processed/
 
 # Ignore models
 models/*
