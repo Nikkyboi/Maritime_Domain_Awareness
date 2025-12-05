@@ -230,7 +230,6 @@ def main():
     # Choose the name of the model to train
     # Options: "rnn", "lstm", "gru", "transformer", "kalman"
     models = ["rnn", "lstm", "gru", "transformer"]
-    #models = ["transformer"]
     
     for model_name in models:
         # Look for the existing model
@@ -277,8 +276,8 @@ def main():
                 for i in range(n_chunks)
             ]
 
-        # Split training sequences into 8 chunks
-        chunks = split_into_n_chunks(training_sequences, 60)
+        # Split training sequences into _ chunks
+        chunks = split_into_n_chunks(training_sequences, 1)
         
         # ----------------------------
         # Compute global normalization stats
@@ -380,8 +379,7 @@ def main():
                 # Show under or overfitting
                 train_loss_total.extend(train_loss)
                 val_loss_total.extend(val_loss)
-            if chunk_idx == 1:
-                break
+            
         # ----------------------------
         # Save model
         torch.save(model.state_dict(), models)
