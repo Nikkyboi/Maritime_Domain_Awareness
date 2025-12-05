@@ -5,11 +5,11 @@ import numpy as np
 import pandas as pd
 from math import radians, cos, sin, sqrt, atan2
 import torch
-from data import find_all_parquet_files
-from CompareModels import compare_models
-from KalmanTrajectoryPrediction import kalman_trajectory_prediction
-from models import Load_model
-from data import AISTrajectorySeq2Seq, load_and_split_data, compute_global_norm_stats
+from .CompareModels import compare_models
+from .data import find_all_parquet_files
+from .KalmanTrajectoryPrediction import kalman_trajectory_prediction
+from .models import Load_model
+from .data import AISTrajectorySeq2Seq, load_and_split_data, compute_global_norm_stats
 import pandas as pd
 
 def haversine(lat1, lon1, lat2, lon2):
@@ -304,17 +304,11 @@ def trajectory_prediction(
     }
 
 
-if __name__ == "__main__":
+def main(in_path = "maritime_domain_awareness/data/Processed/MMSI=220507000/Segment=0/c7215d18afa84486a1f009dd4dd86dd8-0.parquet"):
     
   
-    COMPUTE_TEST_SET_ERROR = True
+    COMPUTE_TEST_SET_ERROR = False
     
-    # Example usage of haversine function
-    lat1, lon1 = 52.2296756, 21.0122287  # Warsaw
-    lat2, lon2 = 41.8919300, 12.5113300  # Rome
-
-    distance = haversine(lat1, lon1, lat2, lon2)
-    print(f"Distance between Warsaw and Rome: {distance:.2f} meters")
     
     # ------ Load a trained model (example) ------
     # Parameters
@@ -332,7 +326,7 @@ if __name__ == "__main__":
 
     print("\nLoading available models...")
     for model_type in model_types:
-        model_path = f"maritime_domain_awareness/models/ais_{model_type}_model.pth"
+        model_path = f"models/ais_{model_type}_model.pth"
         if Path(model_path).exists():
             try:
                 model = Load_model.load_model(model_type, n_in, n_out, n_hid)
@@ -355,7 +349,7 @@ if __name__ == "__main__":
         else:
             model = loaded_models["transformer"]
             
-            base_folder = Path("maritime_domain_awareness/src/maritime_domain_awareness/done44")
+            base_folder = Path("data/Processed")
             
             all_files = find_all_parquet_files(base_folder)
             print(f"Found {len(all_files)} parquet files")
@@ -430,13 +424,16 @@ if __name__ == "__main__":
     else:
         
         # Trajectory_prediction function
+        path = in_path
         #path = "maritime_domain_awareness/data/Raw/processed/MMSI=219002906/Segment=2/513774f9fb5b4cabba2085564bb84c5c-0.parquet"
         #path = "maritime_domain_awareness/data/Raw/processed/MMSI=219001258/Segment=1/513774f9fb5b4cabba2085564bb84c5c-0.parquet"
         #path = "maritime_domain_awareness/data/Raw/processed/MMSI=219001204/Segment=0/513774f9fb5b4cabba2085564bb84c5c-0.parquet"
-        path = "maritime_domain_awareness/data/Raw/processed/MMSI=219000617/Segment=11/513774f9fb5b4cabba2085564bb84c5c-0.parquet"
+        #path = "data/Processed/MMSI=219000617/Segment=11/513774f9fb5b4cabba2085564bb84c5c-0.parquet"
         #path = "maritime_domain_awareness/data/Raw/processed/MMSI=219000617/Segment=25/513774f9fb5b4cabba2085564bb84c5c-0.parquet"
         #path = "maritime_domain_awareness/data/Raw/processed/MMSI=219005931/Segment=1/513774f9fb5b4cabba2085564bb84c5c-0.parquet"
         #path = "maritime_domain_awareness/data/Raw/processed/MMSI=219005941/Segment=0/513774f9fb5b4cabba2085564bb84c5c-0.parquet"
+        #path = "data/Processed/MMSI=220507000/Segment=0/c7215d18afa84486a1f009dd4dd86dd8-0.parquet"
+
         
         df = pd.read_parquet(path)
         X_seq = torch.from_numpy(df[["Latitude", "Longitude", "SOG", "COG"]].to_numpy("float32"))
@@ -491,3 +488,7 @@ if __name__ == "__main__":
             plt.show()
         else:
             print("No models available to compare. Please train a model first.")
+
+
+if __name__ == "__main__":
+    main()

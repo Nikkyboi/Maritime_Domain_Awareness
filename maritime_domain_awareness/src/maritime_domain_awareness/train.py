@@ -174,9 +174,8 @@ def train(
 
     return training_loss, validation_loss
 
-if __name__ == "__main__":
+def main():
     """
-    
     This is an example of how to use the training function with the AIS trajectory dataset.
     
     Same setup should work for:
@@ -230,7 +229,6 @@ if __name__ == "__main__":
     # --------------------------
     # Choose the name of the model to train
     # Options: "rnn", "lstm", "gru", "transformer", "kalman"
-    #model_name = "Transformer"
     models = ["rnn", "lstm", "gru", "transformer"]
     #models = ["transformer"]
     
@@ -280,7 +278,7 @@ if __name__ == "__main__":
             ]
 
         # Split training sequences into 8 chunks
-        chunks = split_into_n_chunks(training_sequences, 1)
+        chunks = split_into_n_chunks(training_sequences, 60)
         
         # ----------------------------
         # Compute global normalization stats
@@ -407,3 +405,7 @@ if __name__ == "__main__":
             # ----------------------------
             # Evaluate on all test sets
             evaluate_model(model, tests_to_run, device, model_name)
+
+
+if __name__ == "__main__":
+    main()
