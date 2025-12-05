@@ -1,49 +1,68 @@
-# Maritime Domain Awareness
-# Group 1
-# - Niklas August Kjølbro
+# maritime_domain_awareness
 
-# Create enviroment
-Create your environment using one of the following commands:
-- **macOS/Linux**:
-    ```bash
-    python3.11 -m venv env
-- **Windows**:
-    ```bash
-    py -3.11 -m venv env
+Deep learning project focused on increasing maritime domain awareness using spatio-temporal AIS data. The project involves building sequential models (e.g., RNN, LSTM, GRU and Transformers) for trajectory prediction based on real-world vessel movement data.
 
-# In case error creating environment then possible solution (Windowns only)
-1. Right-click the Start menu and choose Windows PowerShell (Admin).
-2. Run the following command to allow scripts to run:
-    ```bash
-    Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
-3. If prompted, type Y and press Enter.
+## Project structure
 
-# Commandline to activate the environment:
-Activate your environment using one of the following commands:
-- **macOS/Linux**:
-    ```bash
-    source env/bin/activate
-- **Windows**:
-    ```bash
-    .\env\Scripts\activate  
+The directory structure of the project looks like this:
+```txt
+├── .github/                  # Github actions and dependabot
+│   ├── dependabot.yaml
+│   └── workflows/
+│       └── tests.yaml
+├── configs/                  # Configuration files
+├── data/                     # Data directory
+│   ├── processed             # Processed data (in parquet format)
+│   └── raw                   # Raw data (too big to upload to github)
+├── dockerfiles/              # Dockerfiles
+│   ├── api.Dockerfile
+│   └── train.Dockerfile
+├── docs/                     # Documentation
+│   ├── mkdocs.yml
+│   └── source/
+│       └── index.md
+├── models/                   # Trained models
+├── notebooks/                # Jupyter notebooks
+├── reports/                  # Reports
+│   └── figures/
+├── src/                      # Source code
+│   ├── project_name/
+│   │   ├── models.py
+│   │   │   ├── KalmanFilter.py
+│   │   │   ├── Load_model.py   # Load model (RNN, LSTM, GRU, Transformer)
+│   │   │   ├── mamba_model.py  # Not implemented mamba model
+│   │   │   ├── RNN_models.py   # Container for recurren models (RNN, LSTM, GRU)
+│   │   │   ├── Transformer_model.py # Transformer model
+│   │   │   └── XLSTM_model.py       # Not implemented XLSTM model
+│   │   ├── __init__.py
+│   │   ├── api.py
+│   │   ├── compare.py
+│   │   ├── CompareModels.py
+│   │   ├── data.py
+│   │   ├── evaluate.py      # Evaluate model
+│   │   ├── KalmanFilterWrapper.py
+│   │   ├── KalmanTrajectoryPrediction.py
+│   │   ├── preprocessing.py
+│   │   ├── Sampling.py
+│   │   ├── train.py
+│   │   └── visualize.py
+└── tests/                    # Tests (not implemented)
+│   ├── __init__.py
+│   ├── test_api.py
+│   ├── test_data.py
+│   └── test_model.py
+├── .gitignore
+├── .pre-commit-config.yaml
+├── job.sh                    # Push training to dtu HPC
+├── LICENSE
+├── pyproject.toml            # Python project file
+├── README.md                 # Project README
+├── requirements.txt          # Project requirements
+├── requirements_dev.txt      # Development requirements
+└── tasks.py                  # Project tasks
+```
 
-# src.maritime_domain_awareness.model
 
-# Commandline to download all requirements
-Make sure to activate enviroment
-- **macOS/Linux**:
-    ```bash
-    pip install -r requirements.txt
-- **Windows**:
-    ```bash
-    pip install -r .\requirements.txt
-
-# Commandline to run program:
-Remember to activate enviroment first!
-- **macOS/Linux**:
-    ```bash
-    python -m src.(folder).(file)
-    python -m src.maritime_domain_awareness.models.RNN_models
-- **Windows**:
-    ```bash
-    python .\src\Group_work_(nr)\(file)
+Created using [mlops_template](https://github.com/SkafteNicki/mlops_template),
+a [cookiecutter template](https://github.com/cookiecutter/cookiecutter) for getting
+started with Machine Learning Operations (MLOps).
