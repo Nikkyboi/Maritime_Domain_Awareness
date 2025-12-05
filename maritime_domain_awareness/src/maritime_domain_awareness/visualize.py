@@ -307,7 +307,8 @@ def trajectory_prediction(
 if __name__ == "__main__":
     
   
-    COMPUTE_TEST_SET_ERROR = True
+    COMPUTE_TEST_SET_ERROR = False 
+
     
     # Example usage of haversine function
     lat1, lon1 = 52.2296756, 21.0122287  # Warsaw
@@ -324,10 +325,10 @@ if __name__ == "__main__":
     n_hid = 256    # hidden size for RNN/LSTM/GRU/Transformer
     
     # Sequence length for training and rollout
-    seq_len = 50
+    seq_len = 60
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    model_types = ["transformer", "gru", "lstm", "rnn"]
+    model_types = ["transformer", "rnn", "lstm", "gru"]
     loaded_models = {}
 
     print("\nLoading available models...")
@@ -347,85 +348,134 @@ if __name__ == "__main__":
     # ------------------------------------------
     
     if COMPUTE_TEST_SET_ERROR:
-       
-      
         
-        if "transformer" not in loaded_models:
-            print("✗ Transformer model not loaded. Cannot compute test set error.")
-        else:
-            model = loaded_models["transformer"]
-            
-            base_folder = Path("maritime_domain_awareness/src/maritime_domain_awareness/done44")
-            
-            all_files = find_all_parquet_files(base_folder)
-            print(f"Found {len(all_files)} parquet files")
-            
-            test_sequences = []
-            min_seq_length = seq_len + 50 
-            
-            files_used = 0
-            for file_path in all_files:
-                df = pd.read_parquet(file_path)
-                in_cols = ["Latitude", "Longitude", "SOG", "COG"]
-                X_raw = torch.from_numpy(df[in_cols].to_numpy("float32"))
+        base_folder = Path("maritime_domain_awareness/src/maritime_domain_awareness/done44")
+        all_files = find_all_parquet_files(base_folder)
+        print(f"Found {len(all_files)} parquet files")
+        
+        # Compute normalization stats ONCE (only needed for neural networks, but compute anyway)
+        print("\nComputing normalization statistics...")
+        norm_stats = compute_global_norm_stats()
+        print("✓ Normalization stats computed")
+        
+        # Define time intervals to test (in minutes/steps)
+        # 1 step = 1-step ahead (standard forecasting), then longer horizons
+        time_intervals = [1, 5, 15, 30, 45, 60]
+        
+        # Store results for all models and time intervals
+        all_results = {}
+        
+        # Add Kalman filter to the models to evaluate
+        models_to_evaluate = dict(loaded_models)  # Copy neural network models
+        models_to_evaluate['kalman'] = None  # Add Kalman (doesn't need a model object)
+        
+        # Loop over each model type (including Kalman)
+        for model_name, model in models_to_evaluate.items():
+                print("\n" + "="*70)
+                print(f"EVALUATING MODEL: {model_name.upper()}")
+                print("="*70)
                 
-                N = len(X_raw)
-                if N < min_seq_length:
-                    continue  
+                all_results[model_name] = {}
                 
-                val_end = int(0.85 * N)
-                X_test_raw = X_raw[val_end:] 
-                
-          
-                i = 0
-                sequences_from_file = 0
-                while i + min_seq_length <= len(X_test_raw):
-                    seq = X_test_raw[i:i + min_seq_length]
-                    test_sequences.append(seq)
-                    i += min_seq_length  
-                    sequences_from_file += 1
-                
-                if sequences_from_file > 0:
-                    files_used += 1
-            
-            print(f"Created {len(test_sequences)} test sequences from {files_used} files")
-            
-            future_steps = 50
-            
-            norm_stats = compute_global_norm_stats()
-            
-            all_errors = []
-            for idx, seq in enumerate(test_sequences):
-                if (idx + 1) % 10 == 0:
-                    print(f"Processing sequence {idx + 1}/{len(test_sequences)}...")
-                
-                result = trajectory_prediction(
-                    model=model,
-                    X_seq_raw=seq,
-                    device=device,
-                    seq_len=seq_len,
-                    future_steps=future_steps,
-                    sog_cog_mode="predicted",
-                    model_name="",
-                    save_plot=False,  
-                    norm_stats=norm_stats, 
-                )
-                all_errors.append(result["error_m"])
-            
-            all_errors = np.array(all_errors)
-            results = {
-                "mean_error_m": np.mean(all_errors),
-                "std_error_m": np.std(all_errors),
-                "all_errors_m": all_errors,
-                "num_sequences": len(all_errors),
-            }
-            
-           
-            print(f"Mean error: {results['mean_error_m']:.1f} meters")
-            print(f"Std error: {results['std_error_m']:.1f} meters")
-            print(f"Min error: {results['all_errors_m'].min():.1f} meters")
-            print(f"Max error: {results['all_errors_m'].max():.1f} meters")
-            print(f"Median error: {np.median(results['all_errors_m']):.1f} meters")
+                # Loop over different time intervals
+                for future_steps in time_intervals:
+                    print(f"\n--- Testing {future_steps}-step prediction ---")
+                    
+                    # Create test sequences for this time interval
+                    test_sequences = []
+                    min_seq_length = seq_len + future_steps
+                    
+                    files_used = 0
+                    for file_path in all_files:
+                        df = pd.read_parquet(file_path)
+                        in_cols = ["Latitude", "Longitude", "SOG", "COG"]
+                        X_raw = torch.from_numpy(df[in_cols].to_numpy("float32"))
+                        
+                        N = len(X_raw)
+                        if N < min_seq_length:
+                            continue
+                        
+                        val_end = int(0.85 * N)
+                        X_test_raw = X_raw[val_end:]
+                        
+                        i = 0
+                        sequences_from_file = 0
+                        while i + min_seq_length <= len(X_test_raw):
+                            seq = X_test_raw[i:i + min_seq_length]
+                            test_sequences.append(seq)
+                            i += min_seq_length
+                            sequences_from_file += 1
+                        
+                        if sequences_from_file > 0:
+                            files_used += 1
+                    
+                    print(f"Created {len(test_sequences)} test sequences from {files_used} files")
+                    
+                    # Evaluate model on all test sequences
+                    all_errors = []
+                    for idx, seq in enumerate(test_sequences):
+                        if (idx + 1) % 50 == 0:
+                            print(f"  Processing sequence {idx + 1}/{len(test_sequences)}...")
+                        
+                        # Use appropriate prediction function based on model type
+                        if model_name == 'kalman':
+                            # Use Kalman filter prediction
+                            result = kalman_trajectory_prediction(
+                                X_seq_raw=seq,
+                                seq_len=seq_len,
+                                future_steps=future_steps,
+                                haversine=haversine,
+                            )
+                        else:
+                            
+                            # Use neural network prediction
+                            result = trajectory_prediction(
+                                model=model,
+                                X_seq_raw=seq,
+                                device=device,
+                                seq_len=seq_len,
+                                future_steps=future_steps,
+                                sog_cog_mode="predicted",
+                                model_name="",
+                                save_plot=False,
+                                norm_stats=norm_stats,
+                            )
+                        all_errors.append(result["error_m"])
+                    
+                    all_errors = np.array(all_errors)
+                    results = {
+                        "mean_error_m": np.mean(all_errors),
+                        "std_error_m": np.std(all_errors),
+                        "median_error_m": np.median(all_errors),
+                        "min_error_m": np.min(all_errors),
+                        "max_error_m": np.max(all_errors),
+                        "num_sequences": len(all_errors),
+                    }
+                    
+                    all_results[model_name][future_steps] = results
+                    
+                    # Print results for this time interval
+                    print(f"  Mean: {results['mean_error_m']:.1f}m | "
+                          f"Std: {results['std_error_m']:.1f}m | "
+                      f"Median: {results['median_error_m']:.1f}m")
+        
+        # Print summary comparison table
+        print("\n" + "="*70)
+        print("SUMMARY: MEAN ERROR (meters) BY MODEL AND TIME INTERVAL")
+        print("="*70)
+        print(f"{'Model':<15}", end="")
+        for interval in time_intervals:
+            print(f"{interval:>10} steps", end="")
+        print()
+        print("-"*70)
+        
+        for model_name in models_to_evaluate.keys():
+            print(f"{model_name.upper():<15}", end="")
+            for interval in time_intervals:
+                mean_err = all_results[model_name][interval]["mean_error_m"]
+                print(f"{mean_err:>15.1f}", end="")
+            print()
+        print("="*70)
     
     else:
         
@@ -433,7 +483,8 @@ if __name__ == "__main__":
         #path = "maritime_domain_awareness/data/Raw/processed/MMSI=219002906/Segment=2/513774f9fb5b4cabba2085564bb84c5c-0.parquet"
         #path = "maritime_domain_awareness/data/Raw/processed/MMSI=219001258/Segment=1/513774f9fb5b4cabba2085564bb84c5c-0.parquet"
         #path = "maritime_domain_awareness/data/Raw/processed/MMSI=219001204/Segment=0/513774f9fb5b4cabba2085564bb84c5c-0.parquet"
-        path = "maritime_domain_awareness/data/Raw/processed/MMSI=219000617/Segment=11/513774f9fb5b4cabba2085564bb84c5c-0.parquet"
+        path = "maritime_domain_awareness/src/maritime_domain_awareness/done44/MMSI=219018158/Segment=0/513774f9fb5b4cabba2085564bb84c5c-0.parquet"
+        
         #path = "maritime_domain_awareness/data/Raw/processed/MMSI=219000617/Segment=25/513774f9fb5b4cabba2085564bb84c5c-0.parquet"
         #path = "maritime_domain_awareness/data/Raw/processed/MMSI=219005931/Segment=1/513774f9fb5b4cabba2085564bb84c5c-0.parquet"
         #path = "maritime_domain_awareness/data/Raw/processed/MMSI=219005941/Segment=0/513774f9fb5b4cabba2085564bb84c5c-0.parquet"

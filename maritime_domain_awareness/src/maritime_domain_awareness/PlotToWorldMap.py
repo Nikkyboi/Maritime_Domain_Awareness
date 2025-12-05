@@ -4,7 +4,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 
-def PlotToWorldMap(actualPoint=None, model_predictions=None, model_names=None):
+def PlotToWorldMap(actualPoint=None, model_predictions=None, model_names=None, model_errors=None):
     """
     Plot actual trajectory vs multiple model predictions on a world map.
     
@@ -64,9 +64,14 @@ def PlotToWorldMap(actualPoint=None, model_predictions=None, model_names=None):
                 color = colors[idx % len(colors)]
                 marker = markers[idx % len(markers)]
 
+                error_str = ""
+                if model_errors is not None:
+                    if isinstance(model_errors, dict) and model_name in model_errors:
+                        error_str = f"error: ({model_errors[model_name]:.0f}m)"
+
                 ax.plot(pred_lons, pred_lats, marker=marker, linestyle='--', 
                        color=color, linewidth=1.5, markersize=5,
-                       label=f'{model_name} Prediction', 
+                       label=f'{model_name} Prediction{error_str}', 
                        transform=ccrs.PlateCarree(), alpha=0.7)
 
         elif isinstance(model_predictions, list):
@@ -89,9 +94,14 @@ def PlotToWorldMap(actualPoint=None, model_predictions=None, model_names=None):
                 color = colors[idx % len(colors)]
                 marker = markers[idx % len(markers)]
 
+                error_str = ""
+                if model_errors is not None:
+                    if isinstance(model_errors, list) and idx < len(model_errors):
+                        error_str = f" ({model_errors[idx]:.0f}m)"
+
                 ax.plot(pred_lons, pred_lats, marker=marker, linestyle='--', 
                        color=color, linewidth=1.5, markersize=5,
-                       label=f'{model_names[idx]} Prediction', 
+                       label=f'{model_names[idx]} Prediction{error_str}', 
                        transform=ccrs.PlateCarree(), alpha=0.7)
 
     # Set extent to show Denmark (wider view)

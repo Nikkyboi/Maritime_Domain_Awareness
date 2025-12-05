@@ -109,6 +109,7 @@ def compare_models(X_seq, models_to_compare, seq_len=50, future_steps=50, device
     actual_trajectory = torch.tensor(np.column_stack((true_lat, true_lon)), dtype=torch.float32)
     model_predictions = {}
     model_names_list = []
+    model_errors = {}
 
     for model_name, model_data in results.items():
         result = model_data["result"]
@@ -117,7 +118,8 @@ def compare_models(X_seq, models_to_compare, seq_len=50, future_steps=50, device
             dtype=torch.float32
         )
         model_names_list.append(model_name)
+        model_errors[model_name] = result['error_m']  # Extract error for this model
 
-    PlotToWorldMap(actual_trajectory, model_predictions, model_names_list)
+    PlotToWorldMap(actual_trajectory, model_predictions, model_names_list, model_errors)
 
     return results
