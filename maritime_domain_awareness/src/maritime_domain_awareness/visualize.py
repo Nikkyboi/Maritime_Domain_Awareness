@@ -484,7 +484,7 @@ def main(in_path = "maritime_domain_awareness/data/Processed/MMSI=220507000/Segm
         #path = "maritime_domain_awareness/data/Raw/processed/MMSI=219002906/Segment=2/513774f9fb5b4cabba2085564bb84c5c-0.parquet"
         #path = "maritime_domain_awareness/data/Raw/processed/MMSI=219001258/Segment=1/513774f9fb5b4cabba2085564bb84c5c-0.parquet"
         #path = "maritime_domain_awareness/data/Raw/processed/MMSI=219001204/Segment=0/513774f9fb5b4cabba2085564bb84c5c-0.parquet"
-        path = "data/Processed/MMSI=219018158/Segment=0/513774f9fb5b4cabba2085564bb84c5c-0.parquet"
+        # path = "data/Processed/MMSI=219018158/Segment=0/513774f9fb5b4cabba2085564bb84c5c-0.parquet"
         
         #path = "/data/Processed/MMSI=219000617/Segment=25/513774f9fb5b4cabba2085564bb84c5c-0.parquet"
         #path = "maritime_domain_awareness/data/Raw/processed/MMSI=219005931/Segment=1/513774f9fb5b4cabba2085564bb84c5c-0.parquet"
