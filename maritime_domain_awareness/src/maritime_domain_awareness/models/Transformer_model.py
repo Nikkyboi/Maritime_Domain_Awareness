@@ -2,8 +2,6 @@ import torch
 import torch.nn as nn
 import math
 
-# ------------------------------------------------------------
-# need to delete
 class PositionalEncoding(nn.Module):
     """
     Standard sinusoidal positional encoding.
@@ -45,7 +43,6 @@ class PositionalEncoding(nn.Module):
             x = x + pos
 
         return self.dropout(x)
-# ------------------------------------------------------------
 
 class myTransformer(nn.Module):
     """

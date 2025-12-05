@@ -10,7 +10,7 @@ class AISTrajectorySeq2Seq(Dataset):
     Dataset for AIS trajectory sequence-to-sequence modeling.
     Many to one model.
     
-    It simply stores the full dataset in memory as tensors X and y,
+    Simply stores the full dataset in memory as tensors X and y,
     then returns sequences of length seq_len for each index.
     """
     def __init__(self, X: torch.Tensor, y: torch.Tensor, seq_len: int):
