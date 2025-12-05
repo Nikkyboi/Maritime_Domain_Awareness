@@ -1,5 +1,5 @@
 import numpy as np
-from models.KalmanFilter import KalmanFilter
+from .models.KalmanFilter import KalmanFilter
 
 def kalman_trajectory_prediction(
     X_seq_raw,
